@@ -14,25 +14,32 @@ the Kestrel, trails it with some lag, and leans into turns.
   −Z.
 - The player box is x ∈ [−9, 9], y ∈ [−5, 5] around the rail. Chapter 3's trench
   narrows it.
-- Rail speed is 28 u/s when cruising and 44 u/s when boosting.
+- Rail speed is 28 u/s when cruising, 44 u/s when boosting and 17 u/s when
+  braking.
 
 ## Player — the Kestrel
 
 | Action | Keys | Pad | Notes |
 |---|---|---|---|
 | Steer | WASD / arrows | left stick | The ship banks and pitches into its motion. |
-| Fire | Space / J | A | 8 shots/s; held fire repeats |
-| Roll | Q / E | LB / RB | 0.5 s, deflects enemy shots; 0.8 s cooldown |
+| Fire | Space / J | A | 8 shots/s while held |
+| Charged shot | release Fire | release A | Holding fire also builds a charge (1 s). When full, the reticle locks onto the enemy nearest the aim line; releasing fires a homing plasma bolt: 10 damage, 4 splash damage within 7 u, and it pierces Prism armour and Weaver shields |
+| Roll | Q / E | LB / RB | 0.5 s, deflects enemy shots and Seeker missiles; 0.8 s cooldown |
 | Boost | Shift | RT | Drains 40/s from a 100 meter; refills 20/s |
+| Brake | Ctrl / C | LT | Shares the boost meter |
 | Bomb | B / K | X | Clears enemy shots, deals 20 damage within 90 u ahead; starts with 3, holds up to 5 |
 | Pause | Esc / P | Start | |
 
-- Shields start at 100. An enemy shot deals 10, ramming a Mote 15, an
-  asteroid or wall 20. Each hit gives 1 s of invulnerability with blinking.
+- Shields start at 100. An enemy shot deals 10, a Seeker missile 12, ramming a
+  Mote 15, an obstacle 20. Each hit gives 1 s of invulnerability with blinking.
+- Obstacles (girders, asteroids, ice, boss hulls) are solid: hitting one costs
+  shield once, throws sparks and shakes the camera, and pushes the ship out to
+  the nearest edge so it cannot pass through.
 - Weapon levels: **single** (1 damage), **twin** (2 bolts; unlocked in Chapter
   2), **hyper** (2 bolts, 2 damage, from a cannon pickup while twin).
-- When shields hit 0 the ship explodes and the game offers *Retry chapter* or
-  *Quit to title*. Score rolls back to the chapter's starting value.
+- When shields hit 0 the ship explodes. Once a boss has appeared, *Retry from
+  checkpoint* restarts at that boss with the score, weapon and bombs it had
+  then; *Retry chapter* rolls back to the chapter's start.
 
 ## Scoring
 
@@ -41,8 +48,31 @@ the Kestrel, trails it with some lag, and leans into turns.
   without a kill or when the player takes a hit.
 - After-action card: kills, shot accuracy, shield lost, and a rank (S/A/B/C)
   derived from these against the chapter's par.
-- Progress (highest unlocked chapter, best score per chapter) is saved in
-  `save.txt`.
+- Each chapter has a **medal** for a chapter score: 35k, 60k, 80k, 40k and
+  80k (about half of what the autopilot scores). The HUD shows progress toward it.
+- Progress (unlocked chapters, best chapter scores, medals, difficulty, refit
+  choices) is saved in `save.txt`.
+
+## Difficulty and refit
+
+- New Game asks for a difficulty. **Recruit**: 0.7× enemy fire rate, 0.85×
+  shot speed, 0.6× damage taken. **Guard**: the baseline. **Ace**: 1.3× fire
+  rate, 1.15× shot speed, 1.4× damage taken.
+- After chapters 1–4, a **refit** screen offers three of eight upgrades. Each
+  pick is permanent for the campaign:
+
+| Upgrade | Effect |
+|---|---|
+| Reinforced plating | Shield capacity +25 |
+| Capacitor bank | Charged shots build 40 % faster |
+| Ordnance rack | +2 bomb capacity, +1 bomb at each chapter start |
+| Afterburner coils | Boost and brake drain 35 % slower, refill 60 % faster |
+| Deflector tuning | Roll recharges 40 % faster and lasts 0.7 s |
+| Twin-linked cannons | Cannons start one level higher |
+| Salvage magnet | Pickups home from twice as far, +50 % pickup score |
+| Ember core | Combo window +1 s, combo cap ×10 |
+
+  Chapter select replays a chapter with the refits that were chosen before it.
 
 ## Enemies — the Choir
 
@@ -57,11 +87,16 @@ with a chime.
 | Turret | 6 | 300 | Fixed to station walls; fires aimed shots while 30–140 u ahead. |
 | Mine | 2 | 150 | Spiked seed; drifts toward the player and bursts at 4 u. |
 | Emitter | 20 | 800 | Chapter 3 vault: four pylons that hold station ahead and fire rings of orbs. |
-| Carrier | pods 4×15, core 60 | 5000 | Chapter 4 boss. Launches Mote swarms at the Lantern; the core is shielded until all pods are destroyed. |
+| Seeker | 6 | 600 | Missile drone (from Chapter 2). Hovers 66+ u ahead and launches a homing crystal every 3.2 s from alternating tubes. |
+| Missile | 1 | 50 | Homing crystal that steers at the player for 7 s. It can be shot down, and a roll shrugs it off. |
+| Prism | 14 | 1200 | Armoured crystal (from Chapter 3). Its two halves stay shut for 3 s and reflect bolts, then split open for 1.9 s, firing a 7-way fan; only then can ordinary bolts damage it. Charged shots and bombs ignore the armour. |
+| Weaver | 8 | 900 | Shield projector (from Chapter 4). Hangs back about 90 u and shields the four nearest Choir units, shown as beams and bubbles. Shielded units shrug off bolts until the Weaver dies. The Carrier releases one mid-fight. |
+| Carrier | pods 4×15, core 60 | 5000 | Chapter 4 boss. Launches Motes that dive through the flight box at the Lantern; the core is shielded until all pods are destroyed. After 16 s it releases a Weaver to shield its pods. |
 | Conductor | nodes 4×20, core 120 | 20000 | Chapter 5 boss. Phase 1: a rotating ring with four nodes firing spirals. Phase 2: exposed core firing aimed bursts plus Motes. Phase 3: a death song of radial spirals while the gate folds. |
 
 Bosses "hold" the rail: the world keeps scrolling, but level progress stops
-at the boss's hold point until it dies.
+at the boss's hold point until it dies. A boss's arrival shows a WARNING banner
+and saves a checkpoint.
 
 ## Pickups
 
@@ -89,6 +124,15 @@ Each level is a script of events triggered by progress, plus streamed scenery.
 
 - Low poly, flat-shaded faceted solids, with a ±6 % random brightness change
   per face so planes read as panels.
+- Post-processing: the 3D scene renders at 1.5× resolution into an offscreen
+  target (`--ss` changes the factor) for smooth edges. Bloom is built at
+  quarter resolution: a bright-pass keeping near-saturated pixels, then two
+  separable Gaussian blurs. A composite pass adds the bloom, a soft shoulder,
+  slight saturation and a vignette.
+- Explosions throw tumbling low-poly debris (Choir shards, metal scrap, ice
+  chips) and, for big ones, a shockwave ring.
+- Type: Chakra Petch for titles, HUD labels and numbers; Barlow for radio,
+  story text and descriptions (both SIL OFL, in `assets/fonts`).
 - The custom lit shader does lambert lighting from a per-chapter sun, ambient
   light, distance fog to the sky colour, and a hit flash.
 - **Vertex-color convention** (every lit model): `R` = face brightness, `G` =
@@ -99,8 +143,8 @@ Each level is a script of events triggered by progress, plus streamed scenery.
     engines. Halo's ship has gold accents.
   - Lantern: graphite hull, warm amber windows, a large glowing amber lantern
     core in a cage at the bow.
-  - Choir: obsidian (0.07, 0.06, 0.11), violet core (0.72, 0.32, 1.0), magenta
-    seams.
+  - Choir: obsidian (0.14, 0.12, 0.21), violet core (0.72, 0.32, 1.0), magenta
+    seams; Prism armour is a pale mirror-violet.
   - Station: steel grey, amber hazard lights.
 
 ## Audio
@@ -141,15 +185,20 @@ jblender/
   docs/              story + design
   blender/           lowpoly.py (helpers) + assets.py (every model) → assets/models/*.glb
   tools/gen_audio.py numpy synth → assets/sfx, assets/music
-  assets/shaders/    lit.vs/.fs, sky.vs/.fs
+  assets/shaders/    lit (models), post.vs + bright/blur/composite (bloom)
+  assets/fonts/      Chakra Petch, Barlow (+ OFL licences)
   game/
     rl.jac           raylib 6.0 bindings (structs, externs, constants)
-    gfx.jac          model registry, shaders, transforms, drawing helpers
+    gfx.jac          model registry, lighting uniforms, transforms, drawing helpers
+    post.jac         offscreen target, bloom and composite passes
     audio.jac        sound bank + music
+    state.jac        entity types, the Game aggregate, constants, upgrade and difficulty tables
+    spawn.jac        enemy/shot/pickup/particle creation, explosions, kills and score
     world.jac        chapter definitions: environment, scenery streams, event scripts, radio lines
-    entities.jac     player, enemies, bosses, shots, pickups, particles
-    hud.jac          HUD, radio box, menus, cards
-    main.jac         window, state machine, game loop
+    logic.jac        input, player, enemy AI, bosses, collisions, refit/difficulty/checkpoints
+    render.jac       3D scene: sky, backdrops, props, ships, effects
+    hud.jac          fonts, HUD, radio box, menus, cards, refit and difficulty screens
+    main.jac         window, state machine, game loop, save file
   build.sh           assets + audio + native build
 ```
 

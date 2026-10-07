@@ -317,6 +317,94 @@ def shield_bubble():
     return a
 
 
+# ===================================================================== choir, wave 2
+
+@asset
+def seeker():
+    """Missile drone: a flat crystal hull with two launch tubes."""
+    a = Asset("seeker", seed=44)
+    choir_mats(a)
+    a.add(hull([(0, 1.9, 0), (0, -1.4, 0)] + ring(0.2, 1.3, 0.55, sides=6)), "shell")
+    a.add(ico(0.32, 1), "core", T(0, 1.55, 0.12))
+    for sx in (-1, 1):
+        a.add(prism(0.32, 2.2, sides=6), "shell_hi", T(1.45 * sx, 0.1, -0.05))
+        a.add(prism(0.24, 0.12, sides=6), "tip", T(1.45 * sx, 1.24, -0.05))
+        a.add(bipyramid(0.12, 0.9, 0.1, sides=3), "core", T(1.45 * sx, -1.1, 0.25) @ align_y((0.3 * sx, -1.0, 0.6)))
+    return a
+
+
+@asset
+def missile():
+    """Homing crystal dart fired by Seekers (can be shot down)."""
+    a = Asset("missile", seed=45)
+    choir_mats(a)
+    a.add(bipyramid(0.22, 1.0, 0.5, sides=4), "shell_hi")
+    a.add(bipyramid(0.1, 0.45, 0.0, sides=4), "tip", T(0, 0.9, 0))
+    for ang in (0, 120, 240):
+        a.add(bipyramid(0.06, 0.45, 0.0, sides=3), "core", T(0, -0.35, 0) @ R("Y", ang) @ align_y((0.6, -1.0, 0)))
+    return a
+
+
+@asset
+def prism_half():
+    """One armour half of a Prism; the game draws two, split apart when it opens."""
+    a = Asset("prism_half", seed=46, jitter=0.1)
+    choir_mats(a)
+    a.mat("mirror", (0.62, 0.66, 0.82))
+    pts = [(0, 2.6, 0), (0, -2.6, 0), (0, 0, 2.0), (0, 0, -2.0), (2.1, 0.3, 0.0), (1.6, 1.2, 1.1), (1.6, -1.1, -1.0), (1.4, 1.1, -1.2), (1.5, -1.2, 1.2)]
+    a.add(hull(pts), "mirror")
+    a.add(beam((0.05, 2.5, 0), (2.0, 0.3, 0.0), 0.08), "core")
+    a.add(beam((0.05, -2.5, 0), (2.0, 0.3, 0.0), 0.08), "core")
+    a.add(beam((0.05, 0, 1.95), (2.0, 0.3, 0.0), 0.08), "tip")
+    return a
+
+
+@asset
+def weaver():
+    """Shield projector: a bright core caged by three crystal rings."""
+    a = Asset("weaver", seed=47)
+    choir_mats(a)
+    a.add(ico(0.55, 2), "tip")
+    a.add(torus(1.3, 0.09, segs=20, sides=4), "core")
+    a.add(torus(1.55, 0.08, segs=20, sides=4), "shell_hi", R("X", 70))
+    a.add(torus(1.8, 0.08, segs=22, sides=4), "core", R("Z", 60) @ R("X", 35))
+    for d in [(0, 1, 0), (0, -1, 0), (1, 0, 0.2), (-1, 0, 0.2), (0, 0.2, 1), (0, 0.2, -1)]:
+        a.add(bipyramid(0.12, 1.5, 0.0, sides=3), "shell", align_y(d) @ T(0, 0.5, 0))
+    return a
+
+
+# ===================================================================== effects
+
+@asset
+def shard():
+    """Choir debris fragment."""
+    a = Asset("shard", seed=48, jitter=0.12)
+    choir_mats(a)
+    a.add(hull([(0, 0.55, 0), (0.22, -0.2, 0.05), (-0.18, -0.25, 0.1), (0.02, -0.1, -0.2)]), "shell_hi")
+    a.add(hull([(0, 0.6, 0), (0.06, 0.25, 0.03), (-0.05, 0.25, 0.04), (0, 0.27, -0.05)]), "tip")
+    return a
+
+
+@asset
+def scrap():
+    """Metal debris fragment (station, Guard ships)."""
+    a = Asset("scrap", seed=49, jitter=0.12)
+    a.mat("steel", STEEL)
+    a.mat("hot", (1.0, 0.55, 0.2), emissive=1.0)
+    a.add(box(0.7, 0.45, 0.08), "steel")
+    a.add(box(0.1, 0.45, 0.1), "hot", T(0.33, 0, 0))
+    return a
+
+
+@asset
+def ring_fx():
+    """Shockwave ring, drawn additively and scaled up over time."""
+    a = Asset("ring_fx", seed=50, jitter=0.0)
+    a.mat("glow", (1.0, 0.92, 0.85), emissive=1.0)
+    a.add(torus(1.0, 0.035, segs=48, sides=4), "glow")
+    return a
+
+
 # ===================================================================== environment
 
 def rock_asset(name, seed, stretch, color, n=36):
@@ -654,7 +742,7 @@ SKIES = {
     "tarsis": ((0.10, 0.05, 0.04), (0.20, 0.10, 0.07), (0.55, 0.24, 0.10), (0.30, 0.12, 0.18), (0.55, 0.75, 0.35), (1.0, 0.55, 0.22), 300),
     "shoal": ((0.02, 0.05, 0.08), (0.04, 0.12, 0.16), (0.10, 0.38, 0.45), (0.12, 0.18, 0.40), (-0.5, 0.6, 0.6), (0.9, 0.8, 0.6), 550),
     "hesper": ((0.02, 0.03, 0.05), (0.05, 0.07, 0.11), (0.14, 0.22, 0.36), (0.28, 0.14, 0.36), (0.4, -0.3, 0.85), (0.9, 0.7, 0.5), 650),
-    "reach": ((0.08, 0.02, 0.12), (0.18, 0.06, 0.24), (0.62, 0.22, 0.75), (0.85, 0.30, 0.45), (0.2, 0.8, -0.3), (0.95, 0.55, 1.0), 180),
+    "reach": ((0.06, 0.02, 0.09), (0.13, 0.04, 0.18), (0.42, 0.14, 0.52), (0.55, 0.18, 0.32), (0.2, 0.8, -0.3), (0.55, 0.3, 0.62), 180),
     "aperture": ((0.01, 0.01, 0.03), (0.03, 0.04, 0.08), (0.16, 0.10, 0.30), (0.06, 0.20, 0.30), (-0.3, -0.8, 0.5), (1.0, 0.6, 0.3), 800),
     "epilogue": ((0.04, 0.08, 0.16), (0.10, 0.22, 0.38), (0.30, 0.55, 0.80), (0.55, 0.75, 0.90), (0.0, 1.0, 0.2), (0.85, 0.95, 1.0), 600),
 }

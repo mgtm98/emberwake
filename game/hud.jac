@@ -2,14 +2,18 @@
 
 import math;
 import from rl {
-    Camera3D, Color, Rectangle, Vector2, GetScreenWidth, GetScreenHeight,
+    Camera3D, Color, Rectangle, Vector2, Font, GetScreenWidth, GetScreenHeight,
     DrawRectangle, DrawRectangleLinesEx, DrawRectangleGradientV, DrawLineEx,
-    DrawText, MeasureText, GetWorldToScreen
+    DrawTextEx, MeasureTextEx, LoadFontEx, GenTextureMipmaps, SetTextureFilter,
+    GetWorldToScreen, DrawRing
 }
 import from gfx { vec3, rgba, clamp }
-import from state { Game, Line, U_SHIELD }
+import from state {
+    Game, Line, U_SHIELD, UPGRADE_NAMES, UPGRADE_TEXT, DIFFICULTY_NAMES,
+    DIFFICULTY_TEXT, MEDAL_SCORE, B_VAULT, B_CARRIER, B_CONDUCTOR
+}
 import from world { CHAPTER_NAMES, CHAPTER_PLACES, SPEAKERS }
-import from logic { progress, boss_health }
+import from logic { progress, boss_health, enemy_by_uid }
 
 glob PROLOGUE: list[str] = [
     "Vesper is going dark.",
@@ -54,17 +58,68 @@ def H() -> int {
     return int(GetScreenHeight());
 }
 
+# Fonts: Chakra Petch for titles, labels and numbers; Barlow for running text.
+glob FONTS: list[Font] = [],
+     F_TITLE: int = 0,
+     F_UI: int = 1,
+     F_BODY: int = 2;
+
+def load_font(path: str, size: int) -> Font {
+    f = LoadFontEx(path, i32(size), None, i32(0));
+    GenTextureMipmaps(&mut f.texture);
+    SetTextureFilter(f.texture, i32(2));
+    return f;
+}
+
+def load_fonts(base: str) {
+    FONTS.append(load_font(base + "/fonts/ChakraPetch-Bold.ttf", 112));
+    FONTS.append(load_font(base + "/fonts/ChakraPetch-SemiBold.ttf", 64));
+    FONTS.append(load_font(base + "/fonts/Barlow-SemiBold.ttf", 56));
+}
+
+def ui_font(size: int) -> int {
+    return F_TITLE if size >= 44 else F_UI;
+}
+
+def spacing(fid: int, size: int) -> float {
+    return 0.0 if fid == F_BODY else float(size) * 0.03;
+}
+
+def text_f(fid: int, s: str, x: int, y: int, size: int, c: Color) {
+    f = FONTS[fid];
+    sp = f32(spacing(fid, size));
+    shadow = max(1, size // 18);
+    DrawTextEx(f, s, Vector2(x=f32(float(x + shadow)), y=f32(float(y + shadow))), f32(float(size)), sp, rgba(0, 0, 0, int(c.a) * 2 // 3));
+    DrawTextEx(f, s, Vector2(x=f32(float(x)), y=f32(float(y))), f32(float(size)), sp, c);
+}
+
+def width_f(fid: int, s: str, size: int) -> int {
+    v = MeasureTextEx(FONTS[fid], s, f32(float(size)), f32(spacing(fid, size)));
+    return int(v.x);
+}
+
 def text(s: str, x: int, y: int, size: int, c: Color) {
-    DrawText(s, i32(x + 2), i32(y + 2), i32(size), rgba(0, 0, 0, int(c.a) * 3 // 4));
-    DrawText(s, i32(x), i32(y), i32(size), c);
+    text_f(ui_font(size), s, x, y, size, c);
 }
 
 def width(s: str, size: int) -> int {
-    return int(MeasureText(s, i32(size)));
+    return width_f(ui_font(size), s, size);
 }
 
 def center(s: str, y: int, size: int, c: Color) {
     text(s, (W() - width(s, size)) // 2, y, size, c);
+}
+
+def body(s: str, x: int, y: int, size: int, c: Color) {
+    text_f(F_BODY, s, x, y, size, c);
+}
+
+def body_width(s: str, size: int) -> int {
+    return width_f(F_BODY, s, size);
+}
+
+def center_body(s: str, y: int, size: int, c: Color) {
+    body(s, (W() - body_width(s, size)) // 2, y, size, c);
 }
 
 def rect(x: int, y: int, w: int, h: int, c: Color) {
@@ -98,6 +153,17 @@ def speaker_color(who: int) -> Color {
     return rgba(200, 150, 255, 255);
 }
 
+"""14000 -> "14,000"."""
+def fmt(n: int) -> str {
+    s = str(n);
+    out = "";
+    while len(s) > 3 {
+        out = "," + s[len(s) - 3:len(s)] + out;
+        s = s[0:len(s) - 3];
+    }
+    return s + out;
+}
+
 def pad_score(n: int) -> str {
     s = str(n);
     while len(s) < 7 {
@@ -112,7 +178,7 @@ def wrap(s: str, size: int, limit: int) -> list[str] {
     cur = "";
     for wd in s.split(" ") {
         trial = wd if cur == "" else cur + " " + wd;
-        if width(trial, size) > limit and cur != "" {
+        if body_width(trial, size) > limit and cur != "" {
             out.append(cur);
             cur = wd;
         } else {
@@ -135,14 +201,52 @@ def draw_hud(g: Game, cam: Camera3D) {
     dim = rgba(170, 180, 200, 255);
     ember = rgba(255, 150, 60, 255);
 
-    # reticle
+    # reticle, hit marker, charge arc
     if p.alive {
+        hit = g.hit_t > 0.0;
         for k in range(2) {
             dz = 28.0 + float(k) * 26.0;
             sp = GetWorldToScreen(vec3(p.x, p.y, g.pz - dz), cam);
-            s = 18 - k * 6;
-            frame(int(sp.x) - s, int(sp.y) - s, s * 2, s * 2, rgba(255, 190, 110, 200 - k * 70));
+            s = 18 - k * 6 + (3 if hit else 0);
+            col = rgba(255, 245, 230, 255) if hit else rgba(255, 190, 110, 200 - k * 70);
+            frame(int(sp.x) - s, int(sp.y) - s, s * 2, s * 2, col);
         }
+        if p.charge > 0.05 {
+            c = GetWorldToScreen(vec3(p.x, p.y, g.pz - 28.0), cam);
+            ready = p.charge >= 1.0;
+            pulse = 0.6 + 0.4 * math.sin(float(g.frame) * 0.4);
+            col = rgba(255, 120, 40, int(255.0 * pulse)) if ready else rgba(255, 200, 140, 220);
+            DrawRing(c, f32(26.0), f32(31.0), f32(-90.0), f32(-90.0 + 360.0 * p.charge), i32(40), col);
+        }
+        if g.lock_uid >= 0 {
+            i = enemy_by_uid(g, g.lock_uid);
+            if i >= 0 {
+                e = g.enemies[i];
+                c = GetWorldToScreen(vec3(e.x, e.y, e.z), cam);
+                r = 26 + int(6.0 * math.sin(float(g.frame) * 0.3));
+                lc = rgba(255, 90, 50, 255);
+                cx = int(c.x);
+                cy = int(c.y);
+                for sx in [-1, 1] {
+                    for sy in [-1, 1] {
+                        hx = cx + r - 12 if sx > 0 else cx - r;
+                        vy = cy + r - 12 if sy > 0 else cy - r;
+                        rect(hx, cy + sy * r - 1, 12, 3, lc);
+                        rect(cx + sx * r - 1, vy, 3, 12, lc);
+                    }
+                }
+                text("LOCK", cx - width("LOCK", 14) // 2, cy + r + 8, 14, lc);
+            }
+        }
+    }
+
+    # score pop-ups
+    for u in g.popups {
+        f = clamp(u.t / 1.1, 0.0, 1.0);
+        sp = GetWorldToScreen(vec3(u.x, u.y, u.z), cam);
+        size = 26 if u.big else 18;
+        col = rgba(255, 215, 120, int(255.0 * (1.0 - f * f))) if u.big else rgba(240, 240, 250, int(230.0 * (1.0 - f * f)));
+        text(u.text, int(sp.x) - width(u.text, size) // 2, int(sp.y) - int(f * 40.0) - 30, size, col);
     }
 
     # score + combo
@@ -155,9 +259,14 @@ def draw_hud(g: Game, cam: Camera3D) {
     title = "CH " + str(g.chapter) + "  " + CHAPTER_NAMES[g.chapter];
     text(title, w - width(title, 20) - 24, 18, 20, dim);
     bar(w - 264, 44, 240, 10, progress(g), rgba(255, 170, 80, 220));
+    ch_score = g.score - g.chapter_start_score;
+    target = MEDAL_SCORE[g.chapter];
+    medal = "MEDAL  " + fmt(min(ch_score, target)) + " / " + fmt(target);
+    got = ch_score >= target;
+    text(medal, w - width(medal, 15) - 24, 60, 15, rgba(255, 215, 120, 255) if got else dim);
     if g.escort {
-        text("LANTERN", w - 264, 62, 16, dim);
-        bar(w - 184, 62, 160, 14, g.lantern_hp / 100.0, rgba(255, 200, 110, 230));
+        text("LANTERN", w - 264, 82, 16, dim);
+        bar(w - 184, 82, 160, 14, g.lantern_hp / 100.0, rgba(255, 200, 110, 230));
     }
 
     # boss bar
@@ -173,20 +282,28 @@ def draw_hud(g: Game, cam: Camera3D) {
         sc = rgba(255, 80, 70, 235) if g.frame % 30 < 18 else rgba(150, 40, 40, 235);
     }
     text("SHIELD", 24, h - 72, 16, dim);
-    bar(100, h - 74, 260, 18, p.shield / 100.0, sc);
-    text("BOOST", 24, h - 46, 16, dim);
+    bar(100, h - 74, int(260.0 * p.max_shield / 100.0), 18, p.shield / p.max_shield, sc);
+    text("BRAKE" if p.braking else "BOOST", 24, h - 46, 16, rgba(120, 200, 255, 255) if p.braking else dim);
     bar(100, h - 46, 260, 12, p.boost / 100.0, rgba(255, 160, 60, 220));
 
     # bombs + weapon
     wl = "SINGLE" if p.weapon == 0 else ("TWIN" if p.weapon == 1 else "HYPER");
     text(wl, w - width(wl, 20) - 24, h - 74, 20, ember if p.weapon > 0 else dim);
-    for k in range(p.bombs) {
+    for k in range(p.max_bombs) {
         x = w - 40 - k * 26;
-        rect(x, h - 42, 16, 16, rgba(255, 70, 60, 230));
-        frame(x - 2, h - 44, 20, 20, rgba(255, 180, 160, 160));
+        if k < p.bombs {
+            rect(x, h - 42, 16, 16, rgba(255, 70, 60, 230));
+        }
+        frame(x - 2, h - 44, 20, 20, rgba(255, 180, 160, 160 if k < p.bombs else 60));
     }
 
     draw_radio(g);
+    if g.warn_t > 0.0 {
+        draw_warning(g);
+    }
+    if g.intro_t > 0.0 {
+        draw_intro(g);
+    }
 
     # overlays
     if g.hurt_fx > 0.0 {
@@ -199,6 +316,47 @@ def draw_hud(g: Game, cam: Camera3D) {
     if not p.alive {
         center(g.fail, h // 2 - 20, 36, rgba(255, 120, 90, int(clamp(p.dead_t, 0.0, 1.0) * 255.0)));
     }
+}
+
+def boss_subtitle(kind: int) -> str {
+    if kind == B_VAULT {
+        return "Station defence lattice, Choir-held";
+    } elif kind == B_CARRIER {
+        return "Choir brood ship";
+    }
+    return "The Choir's coordinating mind";
+}
+
+"""Boss arrival banner: hazard stripes, the name, a subtitle."""
+def draw_warning(g: Game) {
+    w = W();
+    h = H();
+    t = 3.6 - g.warn_t;
+    a = clamp(min(t * 3.0, g.warn_t * 2.0), 0.0, 1.0);
+    y = h // 2 - 120;
+    rect(0, y, w, 116, rgba(30, 6, 24, int(170.0 * a)));
+    for k in range(-2, w // 40 + 2) {
+        off = int(t * 60.0) % 40;
+        DrawLineEx(Vector2(x=f32(float(k * 40 + off)), y=f32(float(y))), Vector2(x=f32(float(k * 40 + off + 20)), y=f32(float(y + 10))), f32(6.0), rgba(255, 90, 60, int(200.0 * a)));
+        DrawLineEx(Vector2(x=f32(float(k * 40 - off)), y=f32(float(y + 106))), Vector2(x=f32(float(k * 40 - off + 20)), y=f32(float(y + 116))), f32(6.0), rgba(255, 90, 60, int(200.0 * a)));
+    }
+    blink = 1.0 if int(t * 4.0) % 2 == 0 else 0.55;
+    center("WARNING", y + 16, 22, rgba(255, 110, 80, int(255.0 * a * blink)));
+    center(g.boss.name, y + 40, 46, rgba(240, 220, 255, int(255.0 * a)));
+    center_body(boss_subtitle(g.boss.kind), y + 86, 18, rgba(200, 180, 220, int(230.0 * a)));
+}
+
+"""Lower-third chapter card while the camera sweeps in."""
+def draw_intro(g: Game) {
+    t = 3.4 - g.intro_t;
+    a = clamp(min(t * 2.0, g.intro_t * 1.5), 0.0, 1.0);
+    slide = int((1.0 - a) * 40.0);
+    x = 48 - slide;
+    y = H() - 260;
+    rect(x - 16, y - 8, 6, 104, rgba(255, 140, 50, int(255.0 * a)));
+    text("CHAPTER " + str(g.chapter), x, y, 18, rgba(255, 170, 90, int(255.0 * a)));
+    text(CHAPTER_NAMES[g.chapter], x, y + 24, 46, rgba(245, 240, 235, int(255.0 * a)));
+    body(CHAPTER_PLACES[g.chapter], x, y + 74, 20, rgba(200, 205, 220, int(230.0 * a)));
 }
 
 def draw_radio(g: Game) {
@@ -224,7 +382,7 @@ def draw_radio(g: Game) {
     text(SPEAKERS[g.radio_who], bx + 20, boxy + 10, 18, alpha(c, fade));
     lines = wrap(msg, 20, bw - 40);
     for k in range(min(len(lines), 3)) {
-        text(lines[k], bx + 20, boxy + 36 + k * 22, 20, rgba(230, 235, 245, int(255.0 * fade)));
+        body(lines[k], bx + 20, boxy + 36 + k * 24, 21, rgba(230, 235, 245, int(255.0 * fade)));
     }
 }
 
@@ -262,15 +420,16 @@ def draw_controls() {
     center("CONTROLS", y, 40, rgba(255, 170, 80, 255));
     rows = [
         "Steer ............ WASD / arrows / left stick",
-        "Fire ............. SPACE / J / pad A",
+        "Fire ............. SPACE / J / pad A  (hold to charge, release)",
         "Roll (deflects) .. Q / E / bumpers",
         "Boost ............ SHIFT / right trigger",
+        "Brake ............ CTRL or C / left trigger",
         "Bomb ............. B / K / pad X",
         "Pause ............ P / ESC / start",
         "Mute ............. M        Fullscreen ... F11"
     ];
     for k in range(len(rows)) {
-        center(rows[k], y + 80 + k * 40, 22, rgba(220, 226, 238, 255));
+        center(rows[k], y + 80 + k * 38, 22, rgba(220, 226, 238, 255));
     }
     center("press any key", h - 70, 18, rgba(160, 170, 190, 220));
 }
@@ -281,7 +440,7 @@ def draw_select(g: Game) {
     center("CHAPTER SELECT", h // 6, 40, rgba(255, 170, 80, 255));
     items: list[str] = [];
     for ch in range(1, g.unlocked + 1) {
-        items.append(str(ch) + "  " + CHAPTER_NAMES[ch] + "   best " + str(g.best[ch]));
+        items.append(str(ch) + "  " + CHAPTER_NAMES[ch] + "   best " + fmt(g.best[ch]) + ("   MEDAL" if g.medals[ch] > 0 else ""));
     }
     items.append("BACK");
     draw_menu(items, g.menu, h // 6 + 90);
@@ -293,7 +452,7 @@ def draw_prologue(t: float) {
     for k in range(len(PROLOGUE)) {
         a = clamp((t - float(k) * 2.4) / 1.2, 0.0, 1.0);
         if a > 0.0 {
-            center(PROLOGUE[k], h // 4 + k * 52, 26, rgba(235, 225, 210, int(a * 255.0)));
+            center_body(PROLOGUE[k], h // 4 + k * 52, 28, rgba(235, 225, 210, int(a * 255.0)));
         }
     }
     center("SPACE to continue", h - 60, 16, rgba(160, 170, 190, 200));
@@ -309,7 +468,7 @@ def draw_briefing(g: Game, t: float) {
     center(CHAPTER_PLACES[ch], h // 4 + 108, 24, rgba(190, 200, 220, int(a * 255.0)));
     lines = wrap(BRIEFS[ch], 22, 900);
     for k in range(len(lines)) {
-        center(lines[k], h // 2 + 30 + k * 30, 22, rgba(220, 225, 235, int(a * 255.0)));
+        center_body(lines[k], h // 2 + 30 + k * 32, 24, rgba(220, 225, 235, int(a * 255.0)));
     }
     if t > 1.0 {
         center("SPACE to launch", h - 80, 22, rgba(255, 190, 110, int((0.6 + 0.4 * math.sin(t * 4.0)) * 255.0)));
@@ -325,7 +484,8 @@ def draw_pause(g: Game, items: list[str]) {
 def draw_dead(g: Game, items: list[str]) {
     shade_screen(170);
     center(g.fail, H() // 4, 44, rgba(255, 110, 90, 255));
-    center("Score rolls back to the start of the chapter.", H() // 4 + 64, 20, rgba(200, 200, 210, 230));
+    note = "Retry from the boss checkpoint, or restart the chapter." if g.cp_active else "Score rolls back to the start of the chapter.";
+    center_body(note, H() // 4 + 64, 20, rgba(200, 200, 210, 230));
     draw_menu(items, g.menu, H() // 2);
 }
 
@@ -348,7 +508,8 @@ def draw_complete(g: Game, t: float) {
     center(CHAPTER_NAMES[g.chapter], h // 6 + 52, 28, rgba(240, 236, 230, 255));
     acc = 0 if g.fired == 0 else (g.hits * 100) // g.fired;
     rows = [
-        "Score ............ " + pad_score(g.score),
+        "Chapter score .... " + fmt(g.chapter_score),
+        "Total score ...... " + fmt(g.score),
         "Kills ............ " + str(g.kills),
         "Accuracy ......... " + str(acc) + "%",
         "Shield lost ...... " + str(int(g.damage))
@@ -359,7 +520,13 @@ def draw_complete(g: Game, t: float) {
         }
     }
     if t > 1.8 {
-        center("RANK  " + rank(g), h // 3 + 210, 48, rgba(255, 200, 110, 255));
+        center("RANK  " + rank(g), h // 3 + 240, 48, rgba(255, 200, 110, 255));
+        if g.chapter_score >= MEDAL_SCORE[g.chapter] {
+            m = "MEDAL EARNED" if g.medal_new else "MEDAL";
+            center(m, h // 3 + 300, 22, rgba(255, 215, 120, 255));
+        } else {
+            center("Medal at " + fmt(MEDAL_SCORE[g.chapter]), h // 3 + 300, 20, rgba(170, 175, 190, 255));
+        }
     }
     if t > 2.2 {
         center("SPACE to continue", h - 70, 20, rgba(160, 170, 190, 220));
@@ -372,7 +539,7 @@ def draw_ending(t: float, score: int) {
     for k in range(len(EPILOGUE)) {
         a = clamp((t - 2.0 - float(k) * 3.0) / 1.0, 0.0, 1.0) * clamp((16.0 - t) / 1.0, 0.0, 1.0);
         if a > 0.0 {
-            center(EPILOGUE[k], h // 3 + k * 46, 26, rgba(235, 238, 245, int(a * 255.0)));
+            center_body(EPILOGUE[k], h // 3 + k * 46, 28, rgba(235, 238, 245, int(a * 255.0)));
         }
     }
     if t > 16.0 {
@@ -381,7 +548,11 @@ def draw_ending(t: float, score: int) {
             y = y0 + k * 44;
             if y > -60 and y < h + 60 {
                 size = 64 if k == 0 else 24;
-                center(CREDITS[k], y, size, rgba(255, 190, 110, 255) if k == 0 else rgba(225, 230, 240, 255));
+                if k == 0 {
+                    center(CREDITS[k], y, size, rgba(255, 190, 110, 255));
+                } else {
+                    center_body(CREDITS[k], y, size, rgba(225, 230, 240, 255));
+                }
             }
         }
         if y0 + len(CREDITS) * 44 < h // 2 {
@@ -394,5 +565,70 @@ def draw_ending(t: float, score: int) {
 def draw_white(a: float) {
     if a > 0.0 {
         rect(0, 0, W(), H(), rgba(255, 245, 235, int(clamp(a, 0.0, 1.0) * 255.0)));
+    }
+}
+
+def draw_difficulty(g: Game) {
+    shade_screen(170);
+    h = H();
+    center("SELECT DIFFICULTY", h // 6, 40, rgba(255, 170, 80, 255));
+    for k in range(3) {
+        sel = k == g.menu;
+        y = h // 6 + 90 + k * 92;
+        c = rgba(255, 170, 80, 255) if sel else rgba(200, 206, 220, 255);
+        if sel {
+            rect(W() // 2 - 330, y - 10, 660, 80, rgba(255, 140, 50, 40));
+            frame(W() // 2 - 330, y - 10, 660, 80, rgba(255, 150, 60, 200));
+        }
+        center(DIFFICULTY_NAMES[k], y, 30, c);
+        center_body(DIFFICULTY_TEXT[k], y + 38, 19, rgba(190, 196, 210, 255));
+    }
+    back_sel = g.menu == 3;
+    center("> BACK <" if back_sel else "BACK", h // 6 + 90 + 3 * 92, 24, rgba(255, 170, 80, 255) if back_sel else rgba(170, 176, 190, 255));
+}
+
+"""Refit: three upgrade cards side by side, plus what is already installed."""
+def draw_refit(g: Game, t: float) {
+    shade_screen(185);
+    w = W();
+    h = H();
+    center("REFIT", h // 8, 44, rgba(255, 170, 80, 255));
+    center_body("Choose one upgrade for the Kestrel. It stays for the rest of the campaign.", h // 8 + 56, 20, rgba(200, 205, 220, 255));
+    n = len(g.refit_options);
+    cw = min(340, (w - 120) // 3);
+    gap = 24;
+    x0 = (w - (n * cw + (n - 1) * gap)) // 2;
+    y = h // 3;
+    for k in range(n) {
+        u = g.refit_options[k];
+        x = x0 + k * (cw + gap);
+        sel = k == g.menu;
+        rect(x, y, cw, 230, rgba(18, 22, 36, 235));
+        frame(x, y, cw, 230, rgba(255, 150, 60, 255) if sel else rgba(80, 90, 120, 255));
+        if sel {
+            rect(x, y, cw, 6, rgba(255, 150, 60, 255));
+        }
+        name = UPGRADE_NAMES[u];
+        size = 22;
+        while width(name, size) > cw - 32 and size > 14 {
+            size -= 1;
+        }
+        text(name, x + 16, y + 28, size, rgba(255, 190, 120, 255) if sel else rgba(225, 230, 240, 255));
+        lines = wrap(UPGRADE_TEXT[u], 20, cw - 32);
+        for j in range(len(lines)) {
+            body(lines[j], x + 16, y + 74 + j * 26, 20, rgba(205, 210, 225, 255));
+        }
+    }
+    if len(g.upgrades) > 0 {
+        have = "Installed: ";
+        for j in range(len(g.upgrades)) {
+            have = have + ("" if j == 0 else ", ") + UPGRADE_NAMES[g.upgrades[j]];
+        }
+        for (j, ln) in enumerate(wrap(have, 18, w - 160)) {
+            center_body(ln, y + 262 + j * 24, 18, rgba(170, 176, 192, 255));
+        }
+    }
+    if t > 0.6 {
+        center("LEFT / RIGHT to choose, SPACE to install", h - 64, 18, rgba(170, 178, 196, 230));
     }
 }

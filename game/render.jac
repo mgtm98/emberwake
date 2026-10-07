@@ -11,11 +11,11 @@ import from gfx {
     Gfx, vec3, rgba, clamp, set_view, draw, draw_flash, draw_alpha, draw_sky,
     draw_backdrop, M_KESTREL, M_HALO, M_LANTERN, M_TARSIS, M_MARETH, M_SUN,
     M_SUN_BLUE, M_APERTURE, M_APERTURE_FIELD, M_CORE_ORB, M_SHIELD, M_COND_RING, M_COND_CORE,
-    M_VAULT, M_PICK_SHIELD, M_PICK_CANNON, M_PICK_BOMB
+    M_VAULT, M_PICK_SHIELD, M_PICK_CANNON, M_PICK_BOMB, M_PRISM_HALF, M_RING_FX
 }
 import from state {
-    Game, Enemy, K_CORE, K_BODY, U_SHIELD, U_CANNON, B_VAULT, B_CARRIER,
-    B_CONDUCTOR
+    Game, Enemy, K_CORE, K_BODY, K_PRISM, K_WEAVER, U_SHIELD, U_CANNON, B_VAULT,
+    B_CARRIER, B_CONDUCTOR
 }
 
 def make_camera(g: Game) -> Camera3D {
@@ -102,11 +102,28 @@ def draw_backdrops(g: Game, cx: float, cy: float, cz: float, t: float) {
 }
 
 def draw_enemy(g: Game, e: Enemy, t: float) {
+    if e.kind == K_PRISM {
+        draw_prism(g, e, t);
+        return;
+    }
     s = e.scale;
     if e.kind == K_CORE {
         s = e.scale * (1.0 + 0.08 * math.sin(t * 7.0));
     }
     draw_flash(g.gfx, e.model, e.x, e.y, e.z, e.yaw, e.pitch, e.roll, s, e.flash, 1.0, 1.0, 1.0);
+}
+
+"""Two armour halves that slide apart along the prism's rolled X axis."""
+def draw_prism(g: Game, e: Enemy, t: float) {
+    gx = g.gfx;
+    sc = e.scale;
+    sep = e.b * 1.7 * sc;
+    c = math.cos(e.roll);
+    sn = math.sin(e.roll);
+    draw_flash(gx, M_PRISM_HALF, e.x + c * sep, e.y + sn * sep, e.z, 0.0, 0.0, e.roll, sc, e.flash, 1.0, 1.0, 1.0);
+    draw_flash(gx, M_PRISM_HALF, e.x - c * sep, e.y - sn * sep, e.z, 0.0, 0.0, e.roll + math.pi, sc, e.flash, 1.0, 1.0, 1.0);
+    glow = (0.8 + 0.7 * e.b + 0.08 * math.sin(t * 9.0)) * sc;
+    draw_flash(gx, M_CORE_ORB, e.x, e.y, e.z, t, 0.0, 0.0, glow, e.flash, 1.0, 1.0, 1.0);
 }
 
 def draw_scene(g: Game, cam: Camera3D, t: float) {
@@ -142,6 +159,10 @@ def draw_scene(g: Game, cam: Camera3D, t: float) {
             draw_enemy(g, e, t);
         }
     }
+    for q in g.debris {
+        f = clamp(q.life / q.max_life, 0.0, 1.0);
+        draw(gx, q.model, q.x, q.y, q.z, q.yaw, q.pitch, q.roll, q.scale * (0.3 + 0.7 * f));
+    }
     for u in g.pickups {
         m = M_PICK_SHIELD if u.kind == U_SHIELD else (M_PICK_CANNON if u.kind == U_CANNON else M_PICK_BOMB);
         draw_flash(gx, m, u.x, u.y + 0.3 * math.sin(u.t * 3.0), u.z, u.t * 2.0, 0.3, 0.0, 1.2, 0.25 + 0.2 * math.sin(u.t * 8.0), 1.0, 1.0, 1.0);
@@ -149,7 +170,7 @@ def draw_scene(g: Game, cam: Camera3D, t: float) {
     if p.alive and (p.invuln <= 0.0 or g.frame % 6 < 4) {
         barrel = 0.0;
         if p.roll_t > 0.0 {
-            barrel = p.roll_dir * 2.0 * math.pi * (1.0 - p.roll_t / 0.5);
+            barrel = p.roll_dir * 2.0 * math.pi * (1.0 - p.roll_t / p.roll_len);
         }
         draw(gx, M_KESTREL, p.x, p.y, g.pz, -p.vx * 0.012, p.pitch, p.bank + barrel, 1.0);
     }
@@ -160,6 +181,15 @@ def draw_scene(g: Game, cam: Camera3D, t: float) {
             flicker = 0.25 + 0.2 * math.sin(t * 23.0);
         }
         draw_alpha(gx, M_APERTURE_FIELD, 0.0, 6.0, g.pz - gd, 0.0, 0.0, 0.0, 150.0, flicker);
+    }
+    for e in g.enemies {
+        if e.shielded and e.delay <= 0.0 {
+            draw_alpha(gx, M_SHIELD, e.x, e.y, e.z, t * 0.7, 0.0, 0.0, e.radius * 1.35 + 0.6, 0.2 + 0.06 * math.sin(t * 6.0 + float(e.uid)));
+        }
+    }
+    for r in g.rings {
+        f = clamp(r.t / r.dur, 0.0, 1.0);
+        draw_alpha(gx, M_RING_FX, r.x, r.y, r.z, 0.0, 0.0, 0.0, r.size * (0.25 + 0.75 * f), 0.9 * (1.0 - f));
     }
     draw_effects(g, t);
     EndMode3D();
@@ -199,8 +229,20 @@ def draw_effects(g: Game, t: float) {
             }
         }
     }
+    for e in g.enemies {
+        if e.link >= 0 {
+            for w in g.enemies {
+                if w.uid == e.link {
+                    DrawLine3D(vec3(w.x, w.y, w.z), vec3(e.x, e.y, e.z), rgba(200, 110, 255, 255));
+                }
+            }
+        }
+    }
     for s in g.shots {
-        if s.hostile {
+        if s.charged {
+            DrawSphereEx(vec3(s.x, s.y, s.z), f32(0.95), i32(5), i32(8), rgba(255, 140, 50, 255));
+            DrawSphereEx(vec3(s.x, s.y, s.z), f32(0.5), i32(4), i32(6), rgba(255, 240, 210, 255));
+        } elif s.hostile {
             DrawSphereEx(vec3(s.x, s.y, s.z), f32(0.45), i32(4), i32(6), rgba(150, 60, 230, 255));
             DrawSphereEx(vec3(s.x, s.y, s.z), f32(0.22), i32(3), i32(5), rgba(255, 210, 255, 255));
         } elif s.dmg >= 2.0 {
@@ -219,7 +261,7 @@ def draw_effects(g: Game, t: float) {
 }
 
 """Title backdrop: the Kestrel on a slow turntable above Tarsis."""
-def draw_title_scene(g: Game, t: float) {
+def draw_title_scene(g: Game, t: float, ship: bool) {
     gx = g.gfx;
     cam = Camera3D(position=vec3(0.0, 1.4, 13.5), target=vec3(0.0, -0.3, 0.0), up=vec3(0.0, 1.0, 0.0), fovy=f32(45.0), projection=i32(0));
     set_view(gx, 0.0, 1.4, 13.5);
@@ -231,7 +273,7 @@ def draw_title_scene(g: Game, t: float) {
     } else {
         draw_backdrops(g, 0.0, 1.4, 11.5, t);
     }
-    if g.chapter == 0 {
+    if ship {
         draw(gx, M_KESTREL, 0.0, 0.25 * math.sin(t * 0.8), 0.0, 0.6 + t * 0.25, 0.08 * math.sin(t * 0.6), 0.2 * math.sin(t * 0.5), 1.0);
     }
     EndMode3D();

@@ -17,7 +17,9 @@ glob ST_TITLE: int = 0,
      ST_COMPLETE: int = 6,
      ST_ENDING: int = 7,
      ST_CONTROLS: int = 8,
-     ST_SELECT: int = 9;
+     ST_SELECT: int = 9,
+     ST_REFIT: int = 10,
+     ST_DIFFICULTY: int = 11;
 
 # enemy kinds
 glob K_MOTE: int = 0,
@@ -31,7 +33,11 @@ glob K_MOTE: int = 0,
      K_BODY: int = 8,
      K_NODE: int = 9,
      K_CACHE: int = 10,
-     K_ICE: int = 11;
+     K_ICE: int = 11,
+     K_SEEKER: int = 12,
+     K_MISSILE: int = 13,
+     K_PRISM: int = 14,
+     K_WEAVER: int = 15;
 
 # movement patterns
 glob P_STREAM: int = 0,
@@ -43,7 +49,8 @@ glob P_STREAM: int = 0,
      P_FIXED: int = 6,
      P_LANTERN: int = 7,
      P_DIVE: int = 8,
-     P_PART: int = 9;
+     P_PART: int = 9,
+     P_HOMING: int = 10;
 
 # pickups
 glob U_SHIELD: int = 0,
@@ -72,6 +79,32 @@ glob E_WAVE: int = 0,
 
 glob CHUNK: float = 40.0;
 
+# Refit upgrades offered between chapters (see logic.apply_upgrades).
+glob UPGRADE_NAMES: list[str] = [
+    "REINFORCED PLATING", "CAPACITOR BANK", "ORDNANCE RACK", "AFTERBURNER COILS",
+    "DEFLECTOR TUNING", "TWIN-LINKED CANNONS", "SALVAGE MAGNET", "EMBER CORE"
+];
+glob UPGRADE_TEXT: list[str] = [
+    "Shield capacity +25.",
+    "Charged shots build 40% faster.",
+    "Carry two more bombs and start each chapter with one extra.",
+    "Boost and brake drain 35% slower and refill 60% faster.",
+    "Rolls recharge 40% faster and deflect for longer.",
+    "Cannons start one level higher in every chapter.",
+    "Pickups home in from twice as far and score 50% more.",
+    "Combos last a second longer and climb to x10."
+];
+
+glob DIFFICULTY_NAMES: list[str] = ["RECRUIT", "GUARD", "ACE"];
+glob DIFFICULTY_TEXT: list[str] = [
+    "Gentler fire and lighter hits. For learning the routes.",
+    "The intended balance.",
+    "Faster, denser fire and harder hits."
+];
+
+# Chapter score (points earned in that chapter) that wins its medal.
+glob MEDAL_SCORE: list[int] = [0, 35000, 60000, 80000, 40000, 80000];
+
 obj Player {
     has x: float = 0.0,
         y: float = 0.0,
@@ -91,7 +124,21 @@ obj Player {
         pitch: float = 0.0,
         alive: bool = True,
         dead_t: float = 0.0,
-        trail_t: float = 0.0;
+        trail_t: float = 0.0,
+        charge: float = 0.0,
+        was_firing: bool = False,
+        braking: bool = False,
+        max_shield: float = 100.0,
+        max_bombs: int = 5,
+        charge_time: float = 1.0,
+        boost_drain: float = 40.0,
+        boost_regen: float = 20.0,
+        roll_cd_max: float = 0.8,
+        roll_len: float = 0.5,
+        magnet: float = 45.0,
+        pickup_bonus: float = 1.0,
+        combo_window: float = 2.0,
+        combo_max: int = 8;
 }
 
 obj Enemy {
@@ -130,7 +177,11 @@ obj Enemy {
         shoots: bool = False,
         group: int = -1,
         drop: int = -1,
-        slot: int = 0;
+        slot: int = 0,
+        uid: int = 0,
+        link: int = -1,
+        shielded: bool = False,
+        vz: float = 0.0;
 }
 
 obj Shot {
@@ -143,6 +194,49 @@ obj Shot {
         life: float,
         dmg: float = 1.0,
         hostile: bool = False,
+        charged: bool = False,
+        target: int = -1,
+        alive: bool = True;
+}
+
+"""Floating score text at a world position."""
+obj Popup {
+    has text: str,
+        x: float,
+        y: float,
+        z: float,
+        t: float = 0.0,
+        big: bool = False,
+        alive: bool = True;
+}
+
+"""A tumbling fragment from an explosion."""
+obj Debris {
+    has model: int,
+        x: float,
+        y: float,
+        z: float,
+        vx: float,
+        vy: float,
+        vz: float,
+        yaw: float,
+        pitch: float,
+        roll: float,
+        spin: float,
+        life: float,
+        max_life: float,
+        scale: float,
+        alive: bool = True;
+}
+
+"""An expanding shockwave ring."""
+obj Ring {
+    has x: float,
+        y: float,
+        z: float,
+        size: float,
+        dur: float,
+        t: float = 0.0,
         alive: bool = True;
 }
 
@@ -298,6 +392,33 @@ obj Game {
         cache_done: bool = False,
         muted: bool = False,
         fail: str = "",
+        popups: list[Popup] = [],
+        debris: list[Debris] = [],
+        rings: list[Ring] = [],
+        uid_next: int = 1,
+        lock_uid: int = -1,
+        hit_t: float = 0.0,
+        intro_t: float = 0.0,
+        warn_t: float = 0.0,
+        difficulty: int = 1,
+        fire_rate: float = 1.0,
+        orb_speed: float = 1.0,
+        dmg_scale: float = 1.0,
+        upgrades: list[int] = [],
+        saved_upgrades: list[int] = [],
+        refit_options: list[int] = [],
+        cp_active: bool = False,
+        cp_at: float = 0.0,
+        cp_score: int = 0,
+        cp_start_score: int = 0,
+        cp_weapon: int = 0,
+        cp_bombs: int = 0,
+        cp_shield: float = 100.0,
+        medals: list[int] = [0, 0, 0, 0, 0, 0],
+        medal_new: bool = False,
+        chapter_score: int = 0,
+        prop_hits: int = 0,
+        pin_y: float = 99.0,
         frame: int = 0,
         shot_mode: bool = False,
         demo: bool = False,

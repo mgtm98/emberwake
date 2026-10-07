@@ -4,17 +4,19 @@ and the bookkeeping of a kill (score, combo, formation drops)."""
 import math;
 import random;
 import from state {
-    Game, Enemy, Shot, Particle, Pickup, K_MOTE, K_LANCE, K_WARDEN, K_TURRET,
-    K_MINE, K_EMITTER, K_POD, K_CORE, K_BODY, K_NODE, K_CACHE, K_ICE, P_STREAM,
-    P_V, P_RING, P_SWARM, P_FLANK, P_HOVER, P_FIXED, P_LANTERN, P_DIVE, U_SHIELD,
-    U_CANNON, U_BOMB
+    Game, Enemy, Shot, Particle, Pickup, Popup, Debris, Ring, K_MOTE, K_LANCE,
+    K_WARDEN, K_TURRET, K_MINE, K_EMITTER, K_POD, K_CORE, K_BODY, K_NODE, K_CACHE,
+    K_ICE, K_SEEKER, K_MISSILE, K_PRISM, K_WEAVER, P_STREAM, P_V, P_RING, P_SWARM,
+    P_FLANK, P_HOVER, P_FIXED, P_LANTERN, P_DIVE, U_SHIELD, U_CANNON, U_BOMB
 }
 import from gfx {
     M_MOTE, M_LANCE, M_WARDEN, M_TURRET, M_MINE, M_EMITTER, M_POD, M_CORE_ORB,
-    M_CARRIER, M_COND_NODE, M_CACHE, M_ICE_A, M_ICE_B, M_ICE_C
+    M_CARRIER, M_COND_NODE, M_CACHE, M_ICE_A, M_ICE_B, M_ICE_C, M_SEEKER,
+    M_MISSILE, M_PRISM_HALF, M_WEAVER, M_SHARD, M_SCRAP
 }
 import from audio {
-    play, play_pitch, S_EXPLODE_SMALL, S_EXPLODE_BIG, S_HIT, S_ENEMY_SHOT, S_PICKUP
+    play, play_pitch, S_EXPLODE_SMALL, S_EXPLODE_BIG, S_HIT, S_ENEMY_SHOT, S_PICKUP,
+    S_UI_MOVE
 }
 
 def rnd(lo: float, hi: float) -> float {
@@ -84,9 +86,36 @@ def make_enemy(g: Game, kind: int, x: float, y: float, z: float) -> Enemy {
         hp = 3.0;
         score = 50;
         scale = rnd(1.1, 1.8);
+    } elif kind == K_SEEKER {
+        model = M_SEEKER;
+        hp = 6.0;
+        score = 600;
+        scale = 1.3;
+    } elif kind == K_MISSILE {
+        model = M_MISSILE;
+        hp = 1.0;
+        score = 50;
+        scale = 1.2;
+    } elif kind == K_PRISM {
+        model = M_PRISM_HALF;
+        hp = 14.0;
+        score = 1200;
+        scale = 1.35;
+    } elif kind == K_WEAVER {
+        model = M_WEAVER;
+        hp = 8.0;
+        score = 900;
+        scale = 1.6;
     }
     e = Enemy(kind=kind, model=model, x=x, y=y, z=z, hp=hp, max_hp=hp, score=score, scale=scale);
+    e.uid = g.uid_next;
+    g.uid_next += 1;
     e.radius = g.gfx.radius[model] * scale * 0.8;
+    if kind == K_PRISM {
+        e.radius = 3.4;
+    } elif kind == K_MISSILE {
+        e.radius = 0.9;
+    }
     e.spin = rnd(-1.5, 1.5);
     e.fire_t = rnd(1.0, 3.0);
     g.enemies.append(e);
@@ -156,6 +185,13 @@ def spawn_wave(g: Game, kind: int, pat: int, n: int, x: float, y: float) {
             e.ox = x;
             e.oy = y;
             e.dz = 48.0 + float(i) * 8.0;
+            if kind == K_SEEKER {
+                e.dz = 66.0 + float(i) * 8.0;
+            } elif kind == K_PRISM {
+                e.dz = 56.0 + float(i) * 10.0;
+            } elif kind == K_WEAVER {
+                e.dz = 72.0 + float(i) * 6.0;
+            }
             e.shoots = True;
             e.fire_t = 2.0 + float(i);
         }
@@ -184,6 +220,11 @@ def player_bolt(g: Game, x: float, y: float, dmg: float) {
     g.shots.append(Shot(x=x, y=y, z=g.pz - 2.6, vx=0.0, vy=0.0, vz=-(g.speed + 170.0), life=1.4, dmg=dmg));
 }
 
+"""Charged plasma: slower, homing on `target` (an enemy uid, -1 for none)."""
+def plasma_bolt(g: Game, x: float, y: float, target: int) {
+    g.shots.append(Shot(x=x, y=y, z=g.pz - 3.0, vx=0.0, vy=0.0, vz=-(g.speed + 95.0), life=2.4, dmg=10.0, charged=True, target=target));
+}
+
 """Enemy orb from (x,y,z) toward world point (tx,ty,tz) at `speed` relative to the rail."""
 def enemy_orb(g: Game, x: float, y: float, z: float, tx: float, ty: float, tz: float, speed: float) {
     dx = tx - x;
@@ -193,12 +234,14 @@ def enemy_orb(g: Game, x: float, y: float, z: float, tx: float, ty: float, tz: f
     if n < 0.01 {
         return;
     }
-    g.shots.append(Shot(x=x, y=y, z=z, vx=dx / n * speed, vy=dy / n * speed, vz=dz / n * speed - g.speed, life=6.0, hostile=True));
+    sp = speed * g.orb_speed;
+    g.shots.append(Shot(x=x, y=y, z=z, vx=dx / n * sp, vy=dy / n * sp, vz=dz / n * sp - g.speed, life=6.0, hostile=True));
 }
 
 """Orb with an explicit direction (spirals, rings): lateral (dx,dy) plus approach speed."""
 def enemy_orb_dir(g: Game, x: float, y: float, z: float, dx: float, dy: float, approach: float) {
-    g.shots.append(Shot(x=x, y=y, z=z, vx=dx, vy=dy, vz=approach - g.speed, life=6.0, hostile=True));
+    k = g.orb_speed;
+    g.shots.append(Shot(x=x, y=y, z=z, vx=dx * k, vy=dy * k, vz=approach * k - g.speed, life=6.0, hostile=True));
 }
 
 def aim_at_player(g: Game, e: Enemy, speed: float) {
@@ -267,9 +310,43 @@ def burst(g: Game, x: float, y: float, z: float, n: int, speed: float, size: flo
     }
 }
 
+def debris_piece(g: Game, model: int, x: float, y: float, z: float, speed: float, scale: float) {
+    if len(g.debris) >= 160 {
+        return;
+    }
+    th = rnd(0.0, 2.0 * math.pi);
+    u = rnd(-1.0, 1.0);
+    s = math.sqrt(1.0 - u * u);
+    v = speed * rnd(0.4, 1.0);
+    life = rnd(0.7, 1.4);
+    g.debris.append(Debris(
+        model=model, x=x, y=y, z=z, vx=s * math.cos(th) * v, vy=s * math.sin(th) * v,
+        vz=u * v - g.speed * 0.8, yaw=rnd(0.0, 6.28), pitch=rnd(0.0, 6.28),
+        roll=rnd(0.0, 6.28), spin=rnd(-9.0, 9.0), life=life, max_life=life, scale=scale * rnd(0.6, 1.3)
+    ));
+}
+
+def shockwave(g: Game, x: float, y: float, z: float, size: float, dur: float) {
+    g.rings.append(Ring(x=x, y=y, z=z, size=size, dur=dur));
+}
+
+def popup(g: Game, text: str, x: float, y: float, z: float, big: bool) {
+    if len(g.popups) < 24 {
+        g.popups.append(Popup(text=text, x=x, y=y, z=z, big=big));
+    }
+}
+
 def explosion(g: Game, x: float, y: float, z: float, size: float, palette: int) {
     burst(g, x, y, z, int(14.0 + size * 10.0), 6.0 + size * 5.0, 0.25 + size * 0.12, palette);
     burst(g, x, y, z, int(6.0 + size * 4.0), 2.0 + size * 2.0, 0.6 + size * 0.3, 1);
+    shard = M_SHARD if palette == 0 else (M_ICE_B if palette == 2 else M_SCRAP);
+    shard_scale = 1.0 if palette != 2 else 0.35;
+    for i in range(min(18, int(3.0 + size * 2.5))) {
+        debris_piece(g, shard, x, y, z, 7.0 + size * 3.0, shard_scale * (0.8 + size * 0.15));
+    }
+    if size >= 1.5 {
+        shockwave(g, x, y, z, 2.5 + size * 2.2, 0.35 + size * 0.06);
+    }
     if size >= 2.5 {
         play(g.audio, S_EXPLODE_BIG);
         g.shake = max(g.shake, 0.5 + size * 0.1);
@@ -281,14 +358,17 @@ def explosion(g: Game, x: float, y: float, z: float, size: float, palette: int) 
 
 # ------------------------------------------------------------------ kills
 
-def add_score(g: Game, base: int) {
+def add_score(g: Game, base: int) -> int {
+    p = g.player;
     if g.combo_t > 0.0 {
-        g.combo = min(g.combo + 1, 8);
+        g.combo = min(g.combo + 1, p.combo_max);
     } else {
         g.combo = 1;
     }
-    g.combo_t = 2.0;
-    g.score += base * g.combo;
+    g.combo_t = p.combo_window;
+    gained = base * g.combo;
+    g.score += gained;
+    return gained;
 }
 
 def kill_enemy(g: Game, e: Enemy) {
@@ -301,11 +381,20 @@ def kill_enemy(g: Game, e: Enemy) {
         size = 5.0;
     } elif e.kind == K_LANCE or e.kind == K_TURRET {
         size = 1.6;
+    } elif e.kind == K_SEEKER or e.kind == K_PRISM or e.kind == K_WEAVER {
+        size = 2.4;
+    } elif e.kind == K_MISSILE {
+        size = 0.6;
     }
     explosion(g, e.x, e.y, e.z, size, palette);
     if e.score > 0 {
-        add_score(g, e.score);
+        gained = add_score(g, e.score);
         g.kills += 1;
+        label = "+" + str(gained);
+        if g.combo > 1 {
+            label = label + "  x" + str(g.combo);
+        }
+        popup(g, label, e.x, e.y + e.radius * 0.6, e.z, gained >= 1000);
     }
     if e.drop >= 0 {
         spawn_pickup(g, e.drop, e.x, e.y, e.z);
@@ -323,9 +412,20 @@ def kill_enemy(g: Game, e: Enemy) {
     }
 }
 
-"""Damage an enemy; returns True when it dies."""
-def damage_enemy(g: Game, e: Enemy, dmg: float) -> bool {
+"""Prism armour is closed (state 0) except while open (state 2)."""
+def armoured(e: Enemy) -> bool {
+    return e.shielded or (e.kind == K_PRISM and e.state != 2);
+}
+
+"""Damage an enemy; returns True when it dies. Without `pierce`, Weaver
+shields and closed Prism armour turn the hit away."""
+def damage_enemy(g: Game, e: Enemy, dmg: float, pierce: bool) -> bool {
     if e.invuln or not e.alive or e.delay > 0.0 {
+        return False;
+    }
+    if not pierce and armoured(e) {
+        burst(g, e.x, e.y, e.z + e.radius * 0.5, 4, 6.0, 0.18, 3);
+        play_pitch(g.audio, S_UI_MOVE, rnd(1.6, 2.0));
         return False;
     }
     e.hp -= dmg;
@@ -353,13 +453,15 @@ def collect(g: Game, u: Pickup) {
     p = g.player;
     play(g.audio, S_PICKUP);
     burst(g, u.x, u.y, u.z, 18, 5.0, 0.25, 3);
-    g.score += 250;
+    bonus = int(250.0 * p.pickup_bonus);
+    g.score += bonus;
+    popup(g, "+" + str(bonus), u.x, u.y + 1.0, u.z, False);
     if u.kind == U_SHIELD {
-        p.shield = min(100.0, p.shield + 30.0);
+        p.shield = min(p.max_shield, p.shield + 30.0);
     } elif u.kind == U_CANNON {
         p.weapon = min(2, p.weapon + 1);
         trigger(g, "got_cannon");
     } else {
-        p.bombs = min(5, p.bombs + 1);
+        p.bombs = min(p.max_bombs, p.bombs + 1);
     }
 }

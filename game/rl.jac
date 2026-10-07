@@ -33,6 +33,8 @@ import from raylib {
     obj AudioStream { has buffer: ptr, processor: ptr, sampleRate: u32, sampleSize: u32, channels: u32; }
     obj Sound { has stream: AudioStream, frameCount: u32; }
     obj Music { has stream: AudioStream, frameCount: u32, looping: bool, ctxType: i32, ctxData: ptr; }
+    obj Font { has baseSize: i32, glyphCount: i32, glyphPadding: i32, texture: Texture, recs: ptr[Rectangle], glyphs: ptr; }
+    obj RenderTexture { has id: u32, texture: Texture, depth: Texture; }
 
     # window / frame
     def SetConfigFlags(flags: u32) -> None;
@@ -85,6 +87,7 @@ import from raylib {
     def DrawRectangleGradientV(posX: i32, posY: i32, width: i32, height: i32, top: Color, bottom: Color) -> None;
     def DrawLineEx(startPos: Vector2, endPos: Vector2, thick: f32, color: Color) -> None;
     def DrawCircleLines(centerX: i32, centerY: i32, radius: f32, color: Color) -> None;
+    def DrawRing(center: Vector2, innerRadius: f32, outerRadius: f32, startAngle: f32, endAngle: f32, segments: i32, color: Color) -> None;
     def DrawText(text: str, posX: i32, posY: i32, fontSize: i32, color: Color) -> None;
     def MeasureText(text: str, fontSize: i32) -> i32;
 
@@ -93,6 +96,25 @@ import from raylib {
     def DrawSphereEx(centerPos: Vector3, radius: f32, rings: i32, slices: i32, color: Color) -> None;
     def DrawCylinderEx(startPos: Vector3, endPos: Vector3, startRadius: f32, endRadius: f32, sides: i32, color: Color) -> None;
     def DrawLine3D(startPos: Vector3, endPos: Vector3, color: Color) -> None;
+
+    # fonts
+    def LoadFontEx(fileName: str, fontSize: i32, codepoints: ptr[i32] | None, codepointCount: i32) -> Font;
+    def IsFontValid(font: Font) -> bool;
+    def DrawTextEx(font: Font, text: str, position: Vector2, fontSize: f32, spacing: f32, tint: Color) -> None;
+    def MeasureTextEx(font: Font, text: str, fontSize: f32, spacing: f32) -> Vector2;
+
+    # textures + render targets
+    def GenTextureMipmaps(texture: &mut Texture) -> None;
+    def SetTextureFilter(texture: Texture, filter: i32) -> None;
+    def LoadRenderTexture(width: i32, height: i32) -> RenderTexture;
+    def IsRenderTextureValid(target: RenderTexture) -> bool;
+    def UnloadRenderTexture(target: RenderTexture) -> None;
+    def BeginTextureMode(target: RenderTexture) -> None;
+    def EndTextureMode -> None;
+    def BeginShaderMode(shader: Shader) -> None;
+    def EndShaderMode -> None;
+    def DrawTexturePro(texture: Texture, source: Rectangle, dest: Rectangle, origin: Vector2, rotation: f32, tint: Color) -> None;
+    def SetShaderValueTexture(shader: Shader, locIndex: i32, texture: Texture) -> None;
 
     # models + shaders
     def LoadModel(fileName: str) -> Model;
@@ -128,12 +150,13 @@ glob FLAG_VSYNC_HINT: int = 0x40,
      LOG_WARNING: int = 4,
      BLEND_ALPHA: int = 0,
      BLEND_ADDITIVE: int = 1,
-     SHADER_UNIFORM_VEC4: int = 3;
+     SHADER_UNIFORM_VEC4: int = 3,
+     FILTER_BILINEAR: int = 1,
+     FILTER_TRILINEAR: int = 2;
 
 glob KEY_SPACE: int = 32,
      KEY_A: int = 65,
      KEY_B: int = 66,
-     KEY_C: int = 67,
      KEY_D: int = 68,
      KEY_E: int = 69,
      KEY_J: int = 74,
@@ -144,6 +167,11 @@ glob KEY_SPACE: int = 32,
      KEY_S: int = 83,
      KEY_W: int = 87,
      KEY_X: int = 88,
+     KEY_C: int = 67,
+     KEY_L: int = 76,
+     KEY_TAB: int = 258,
+     KEY_LEFT_CONTROL: int = 341,
+     KEY_RIGHT_CONTROL: int = 345,
      KEY_ESCAPE: int = 256,
      KEY_ENTER: int = 257,
      KEY_RIGHT: int = 262,
@@ -164,6 +192,7 @@ glob PAD_UP: int = 1,
      PAD_LB: int = 9,
      PAD_RB: int = 11,
      PAD_RT: int = 12,
+     PAD_LT: int = 10,
      PAD_START: int = 15,
      PAD_AXIS_X: int = 0,
      PAD_AXIS_Y: int = 1;

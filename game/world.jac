@@ -5,7 +5,8 @@ import math;
 import random;
 import from state {
     Game, Event, Line, Prop, CHUNK, E_WAVE, E_ENEMY, E_PICKUP, E_BOSS, E_FLAG,
-    K_MOTE, K_LANCE, K_WARDEN, K_TURRET, K_MINE, K_CACHE, K_ICE, P_STREAM, P_V,
+    K_MOTE, K_LANCE, K_WARDEN, K_TURRET, K_MINE, K_CACHE, K_ICE, K_SEEKER,
+    K_PRISM, K_WEAVER, P_STREAM, P_V,
     P_RING, P_SWARM, P_FLANK, P_HOVER, P_LANTERN, P_DIVE, U_SHIELD, U_CANNON,
     U_BOMB, B_VAULT, B_CARRIER, B_CONDUCTOR, W_WREN, W_SATO, W_HALO, W_LIND, W_LOG
 }
@@ -103,7 +104,9 @@ def chapter_1(g: Game) {
     say(g, 0.38, W_WREN, "Halo is breaking formation.");
     say(g, 0.50, W_HALO, "Ember, whatever happens, you get them to that ga-");
     say(g, 0.53, W_WREN, "... Halo's transponder is offline. I am sorry.");
+    say(g, 0.40, W_WREN, "Hold fire to build a charge. Let go, and the plasma bolt homes on whatever you are aiming at.");
     say(g, 0.59, W_WREN, "Silver rings restore shields. Fly through them.");
+    say(g, 0.66, W_WREN, "CTRL brakes. Boost and brake share one meter.");
     say(g, 0.81, W_SATO, "Two heavy signatures closing. Wardens. Keep them off my hull.");
     say(g, 0.95, W_SATO, "We're clear of orbit. Good flying, Ember. Halo would have said so.");
 
@@ -163,6 +166,10 @@ def chapter_2(g: Game) {
     flag(g, 0.47, "cache_check");
     wave(g, 0.47, K_MOTE, P_DIVE, 6, -6.0, 1.0);
     wave(g, 0.50, K_LANCE, P_FLANK, 4, 1.0, 0.0);
+    say(g, 0.505, W_WREN, "Seekers. They launch homing crystals. Shoot the crystals down, or roll as they hit.");
+    wave(g, 0.51, K_SEEKER, P_HOVER, 1, -5.0, 2.0);
+    wave(g, 0.53, K_SEEKER, P_HOVER, 1, 5.0, -1.0);
+    wave(g, 0.79, K_SEEKER, P_HOVER, 2, 0.0, 1.0);
     enemy(g, 0.55, K_MINE, -5.0, 2.0, 200.0);
     enemy(g, 0.552, K_MINE, 0.0, -3.0, 200.0);
     enemy(g, 0.554, K_MINE, 5.0, 1.0, 200.0);
@@ -195,7 +202,13 @@ def chapter_3(g: Game) {
     wave(g, 0.12, K_MOTE, P_STREAM, 5, 0.0, 2.0);
     wave(g, 0.18, K_MOTE, P_V, 5, 0.0, 0.0);
     wave(g, 0.24, K_LANCE, P_FLANK, 2, -1.0, 0.0);
+    say(g, 0.255, W_WREN, "Prism armour turns our cannons. Hit it while it is open, or break it with a charged shot.");
+    wave(g, 0.26, K_PRISM, P_HOVER, 1, 0.0, 1.0);
     wave(g, 0.30, K_MOTE, P_STREAM, 6, -3.0, 3.0);
+    wave(g, 0.39, K_PRISM, P_HOVER, 1, -4.0, 2.0);
+    wave(g, 0.39, K_SEEKER, P_HOVER, 1, 4.0, -1.0);
+    wave(g, 0.70, K_PRISM, P_HOVER, 1, 3.0, 0.0);
+    wave(g, 0.76, K_SEEKER, P_HOVER, 1, -4.0, 1.0);
     pickup(g, 0.33, U_SHIELD, 0.0, 1.0);
     wave(g, 0.36, K_MOTE, P_RING, 6, 0.0, 1.0);
     wave(g, 0.42, K_LANCE, P_FLANK, 3, 1.0, 2.0);
@@ -228,7 +241,12 @@ def chapter_4(g: Game) {
     pickup(g, 0.15, U_SHIELD, 0.0, 0.0);
     wave(g, 0.17, K_LANCE, P_FLANK, 3, -1.0, 0.0);
     wave(g, 0.20, K_MOTE, P_LANTERN, 8, 0.0, 0.0);
+    say(g, 0.225, W_WREN, "That one is a Weaver. It is shielding the others. Kill it first.");
+    wave(g, 0.23, K_WEAVER, P_HOVER, 1, 0.0, 3.5);
     wave(g, 0.24, K_MOTE, P_SWARM, 10, 0.0, 0.0);
+    say_on(g, "weaver", W_WREN, "The Carrier released a Weaver. Its pods are shielded. Weaver first.");
+    wave(g, 0.86, K_SEEKER, P_HOVER, 2, 0.0, 1.0);
+    wave(g, 0.88, K_PRISM, P_HOVER, 1, 0.0, -1.0);
     pickup(g, 0.28, U_BOMB, 0.0, 0.0);
     boss(g, 0.30, B_CARRIER);
     wave(g, 0.82, K_MOTE, P_STREAM, 6, -3.0, 1.0);
@@ -262,7 +280,11 @@ def chapter_5(g: Game) {
     boss(g, 0.12, B_CONDUCTOR);
     wave(g, 0.28, K_LANCE, P_FLANK, 3, -1.0, 1.0);
     wave(g, 0.33, K_LANCE, P_FLANK, 3, 1.0, -1.0);
+    wave(g, 0.395, K_WEAVER, P_HOVER, 1, 0.0, 3.0);
     wave(g, 0.40, K_MOTE, P_SWARM, 12, 0.0, 0.0);
+    wave(g, 0.56, K_PRISM, P_HOVER, 2, -3.0, 0.0);
+    wave(g, 0.66, K_SEEKER, P_HOVER, 2, 2.0, 1.0);
+    wave(g, 0.775, K_WEAVER, P_HOVER, 1, 0.0, -2.0);
     enemy(g, 0.46, K_MINE, -4.0, 2.0, 220.0);
     enemy(g, 0.465, K_MINE, 4.0, -2.0, 220.0);
     enemy(g, 0.47, K_MINE, 0.0, 3.0, 220.0);

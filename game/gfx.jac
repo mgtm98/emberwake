@@ -22,7 +22,8 @@ glob MODEL_NAMES: list[str] = [
     "debris_girder", "dock_gantry", "trench_wall", "trench_floor", "girder",
     "vault_spine", "cache", "pickup_shield", "pickup_cannon", "pickup_bomb",
     "planet_tarsis", "planet_mareth", "sun", "sun_blue", "aperture",
-    "aperture_field", "sky_tarsis", "sky_shoal", "sky_hesper", "sky_reach",
+    "aperture_field", "seeker", "missile", "prism_half", "weaver", "shard",
+    "scrap", "ring_fx", "sky_tarsis", "sky_shoal", "sky_hesper", "sky_reach",
     "sky_aperture", "sky_epilogue"
 ];
 
@@ -65,13 +66,20 @@ glob M_KESTREL: int = 0,
      M_SUN_BLUE: int = 36,
      M_APERTURE: int = 37,
      M_APERTURE_FIELD: int = 38,
-     M_SKY_TARSIS: int = 39,
-     M_SKY_SHOAL: int = 40,
-     M_SKY_HESPER: int = 41,
-     M_SKY_REACH: int = 42,
-     M_SKY_APERTURE: int = 43,
-     M_SKY_EPILOGUE: int = 44,
-     FIRST_SKY: int = 39;
+     M_SEEKER: int = 39,
+     M_MISSILE: int = 40,
+     M_PRISM_HALF: int = 41,
+     M_WEAVER: int = 42,
+     M_SHARD: int = 43,
+     M_SCRAP: int = 44,
+     M_RING_FX: int = 45,
+     M_SKY_TARSIS: int = 46,
+     M_SKY_SHOAL: int = 47,
+     M_SKY_HESPER: int = 48,
+     M_SKY_REACH: int = 49,
+     M_SKY_APERTURE: int = 50,
+     M_SKY_EPILOGUE: int = 51,
+     FIRST_SKY: int = 46;
 
 """Lighting environment of a scene (all colours 0..1)."""
 obj Env {

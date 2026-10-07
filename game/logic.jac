@@ -7,27 +7,30 @@ import from rl {
     IsKeyDown, IsKeyPressed, IsGamepadAvailable, IsGamepadButtonDown,
     IsGamepadButtonPressed, GetGamepadAxisMovement, KEY_SPACE, KEY_A, KEY_B,
     KEY_D, KEY_E, KEY_J, KEY_K, KEY_Q, KEY_S, KEY_W, KEY_LEFT, KEY_RIGHT,
-    KEY_UP, KEY_DOWN, KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT, PAD_A, PAD_X, PAD_LB,
-    PAD_RB, PAD_RT, PAD_AXIS_X, PAD_AXIS_Y
+    KEY_UP, KEY_DOWN, KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT, KEY_LEFT_CONTROL, KEY_C,
+    PAD_A, PAD_X, PAD_LB, PAD_RB, PAD_RT, PAD_LT, PAD_AXIS_X, PAD_AXIS_Y
 }
 import from state {
     Game, Player, Enemy, Shot, Boss, Line, Particle, Pickup, Prop, ST_PLAY, ST_DEAD, ST_COMPLETE,
     ST_ENDING, K_MOTE, K_LANCE, K_WARDEN, K_TURRET, K_MINE, K_EMITTER, K_POD,
-    K_CORE, K_BODY, K_NODE, K_CACHE, K_ICE, P_STREAM, P_V, P_RING, P_SWARM,
-    P_FLANK, P_HOVER, P_FIXED, P_LANTERN, P_DIVE, P_PART, U_SHIELD, U_CANNON,
+    K_CORE, K_BODY, K_NODE, K_CACHE, K_ICE, K_SEEKER, K_MISSILE, K_PRISM,
+    K_WEAVER, P_STREAM, P_V, P_RING, P_SWARM, P_FLANK, P_HOVER, P_FIXED,
+    P_LANTERN, P_DIVE, P_PART, P_HOMING, Popup, Debris, Ring, MEDAL_SCORE,
+    UPGRADE_NAMES, U_SHIELD, U_CANNON,
     U_BOMB, B_NONE, B_VAULT, B_CARRIER, B_CONDUCTOR, E_WAVE, E_ENEMY, E_PICKUP,
     E_BOSS, E_FLAG, CHUNK
 }
 import from gfx { apply_env, M_CARRIER, M_COND_CORE, M_CORE_ORB }
 import from audio {
     play, play_pitch, music, chapter_track, S_LASER, S_HURT, S_ROLL, S_BOOST,
-    S_BOMB, S_ALARM, S_RADIO, S_ENEMY_SHOT, S_WARNING, S_EXPLODE_BOSS, S_EXPLODE_BIG, MU_BOSS,
+    S_BOMB, S_ALARM, S_RADIO, S_ENEMY_SHOT, S_EXPLODE_SMALL, S_HIT, S_UI_SELECT, S_WARNING, S_EXPLODE_BOSS, S_EXPLODE_BIG, MU_BOSS,
     MU_CH5
 }
 import from spawn {
     rnd, chance, make_enemy, spawn_wave, spawn_fixed, spawn_pickup, player_bolt,
     enemy_orb, enemy_orb_dir, aim_at_player, burst, explosion, damage_enemy,
-    kill_enemy, collect, trigger, particle
+    kill_enemy, collect, trigger, particle, plasma_bolt, shockwave, popup,
+    armoured
 }
 import from world { chapter_env, build_chapter, gen_chunk, CHAPTER_LENGTHS }
 
@@ -93,6 +96,18 @@ def start_chapter(g: Game, ch: int) {
     apply_env(g.gfx, g.env);
     g.player = Player();
     g.player.weapon = 1 if ch >= 3 else 0;
+    apply_upgrades(g);
+    set_difficulty(g, g.difficulty);
+    g.popups = [];
+    g.debris = [];
+    g.rings = [];
+    g.lock_uid = -1;
+    g.hit_t = 0.0;
+    g.warn_t = 0.0;
+    g.intro_t = 3.4;
+    g.cp_active = False;
+    g.medal_new = False;
+    g.chapter_score = 0;
     g.enemies = [];
     g.shots = [];
     g.particles = [];
@@ -139,6 +154,106 @@ def start_chapter(g: Game, ch: int) {
     music(g.audio, chapter_track(ch));
 }
 
+"""Difficulty: 0 recruit, 1 guard, 2 ace."""
+def set_difficulty(g: Game, d: int) {
+    g.difficulty = d;
+    g.fire_rate = [0.7, 1.0, 1.3][d];
+    g.orb_speed = [0.85, 1.0, 1.15][d];
+    g.dmg_scale = [0.6, 1.0, 1.4][d];
+}
+
+"""Apply the refit upgrades chosen so far to a fresh Player."""
+def apply_upgrades(g: Game) {
+    p = g.player;
+    for u in g.upgrades {
+        if u == 0 {
+            p.max_shield += 25.0;
+        } elif u == 1 {
+            p.charge_time *= 0.6;
+        } elif u == 2 {
+            p.max_bombs += 2;
+            p.bombs += 1;
+        } elif u == 3 {
+            p.boost_drain *= 0.65;
+            p.boost_regen *= 1.6;
+        } elif u == 4 {
+            p.roll_cd_max *= 0.6;
+            p.roll_len = 0.7;
+        } elif u == 5 {
+            p.weapon += 1;
+        } elif u == 6 {
+            p.magnet *= 2.0;
+            p.pickup_bonus = 1.5;
+        } elif u == 7 {
+            p.combo_window += 1.0;
+            p.combo_max = 10;
+        }
+    }
+    p.weapon = min(2, p.weapon);
+    p.shield = p.max_shield;
+}
+
+"""Three refit offers for after chapter `ch`: a fixed shuffle of what is left."""
+def refit_choices(g: Game, ch: int) -> list[int] {
+    pool: list[int] = [];
+    for u in range(len(UPGRADE_NAMES)) {
+        if u not in g.upgrades {
+            pool.append(u);
+        }
+    }
+    random.seed(77 + ch * 13);
+    out: list[int] = [];
+    while len(out) < 3 and len(pool) > 0 {
+        k = int(random.random() * float(len(pool)));
+        out.append(pool[k]);
+        rest: list[int] = [];
+        for j in range(len(pool)) {
+            if j != k {
+                rest.append(pool[j]);
+            }
+        }
+        pool = rest;
+    }
+    return out;
+}
+
+def save_checkpoint(g: Game) {
+    p = g.player;
+    g.cp_active = True;
+    g.cp_at = max(0.0, progress(g) - 0.003);
+    g.cp_score = g.score;
+    g.cp_start_score = g.chapter_start_score;
+    g.cp_weapon = p.weapon;
+    g.cp_bombs = p.bombs;
+    g.cp_shield = max(p.shield, p.max_shield * 0.6);
+}
+
+"""Restart the chapter at the last boss checkpoint."""
+def retry_checkpoint(g: Game) {
+    at = g.cp_at;
+    score = g.cp_score;
+    start = g.cp_start_score;
+    weapon = g.cp_weapon;
+    bombs = g.cp_bombs;
+    shield = g.cp_shield;
+    g.score = start;
+    start_chapter(g, g.chapter);
+    skip_to(g, at);
+    g.score = score;
+    g.chapter_start_score = start;
+    g.player.weapon = weapon;
+    g.player.bombs = bombs;
+    g.player.shield = shield;
+    g.intro_t = 0.0;
+    g.cp_active = True;
+    g.cp_at = at;
+    g.cp_score = score;
+    g.cp_start_score = start;
+    g.cp_weapon = weapon;
+    g.cp_bombs = bombs;
+    g.cp_shield = shield;
+}
+
 def stream_chunks(g: Game) {
     while -float(g.chunk_next) * CHUNK > g.pz - 380.0 {
         gen_chunk(g, g.chunk_next);
@@ -167,6 +282,7 @@ def skip_to(g: Game, p: float) {
     g.props = [];
     g.enemies = [];
     g.chunk_next = int(g.scroll / CHUNK);
+    g.intro_t = 0.0;
     stream_chunks(g);
 }
 
@@ -272,6 +388,7 @@ def hurt(g: Game, dmg: float) {
     if not p.alive or p.invuln > 0.0 or g.demo {
         return;
     }
+    dmg = dmg * g.dmg_scale;
     p.shield -= dmg;
     p.invuln = 1.0;
     g.damage += dmg;
@@ -323,6 +440,9 @@ def update_player(g: Game, dt: float) {
             }
         }
     }
+    if g.pin_y < 50.0 {
+        ay = max(-1.0, min(1.0, (g.pin_y - p.y) * 2.0));
+    }
     k = min(1.0, dt * 8.0);
     p.vx += (ax * 15.0 - p.vx) * k;
     p.vy += (ay * 11.0 - p.vy) * k;
@@ -352,15 +472,21 @@ def update_player(g: Game, dt: float) {
 
     # boost
     want = not g.demo and key_or_pad(KEY_LEFT_SHIFT, KEY_RIGHT_SHIFT, PAD_RT);
+    brake = not g.demo and key_or_pad(KEY_LEFT_CONTROL, KEY_C, PAD_LT);
+    p.braking = False;
     if want and p.boost > 4.0 and g.gate_t <= 0.0 {
         if not p.boosting {
             play(g.audio, S_BOOST);
         }
         p.boosting = True;
-        p.boost = max(0.0, p.boost - 40.0 * dt);
+        p.boost = max(0.0, p.boost - p.boost_drain * dt);
+    } elif brake and p.boost > 4.0 and g.gate_t <= 0.0 {
+        p.boosting = False;
+        p.braking = True;
+        p.boost = max(0.0, p.boost - p.boost_drain * 0.8 * dt);
     } else {
         p.boosting = False;
-        p.boost = min(100.0, p.boost + 20.0 * dt);
+        p.boost = min(100.0, p.boost + p.boost_regen * dt);
     }
 
     # roll
@@ -368,9 +494,9 @@ def update_player(g: Game, dt: float) {
         left = pressed_or_pad(KEY_Q, KEY_Q, PAD_LB);
         right = pressed_or_pad(KEY_E, KEY_E, PAD_RB);
         if left or right {
-            p.roll_t = 0.5;
+            p.roll_t = p.roll_len;
             p.roll_dir = 1.0 if left else -1.0;
-            p.roll_cd = 0.8;
+            p.roll_cd = p.roll_cd_max;
             p.vx += -8.0 if left else 8.0;
             play(g.audio, S_ROLL);
         }
@@ -378,7 +504,35 @@ def update_player(g: Game, dt: float) {
 
     # fire
     p.fire_cd -= dt;
-    firing = key_or_pad(KEY_SPACE, KEY_J, PAD_A) or g.demo;
+    firing = key_or_pad(KEY_SPACE, KEY_J, PAD_A);
+    if g.demo {
+        # the autopilot lets go of the trigger every 2.6 s to loose a charged shot
+        firing = int(g.demo_t / 2.6) == int((g.demo_t - dt) / 2.6);
+    }
+    if firing {
+        was_ready = p.charge >= 1.0;
+        p.charge = min(1.0, p.charge + dt / p.charge_time);
+        if p.charge >= 1.0 {
+            old = g.lock_uid;
+            g.lock_uid = find_lock(g);
+            if g.lock_uid >= 0 and g.lock_uid != old {
+                play_pitch(g.audio, S_UI_SELECT, 1.5);
+            } elif not was_ready {
+                play_pitch(g.audio, S_UI_SELECT, 1.2);
+            }
+        }
+    } else {
+        if p.was_firing and p.charge >= 1.0 {
+            plasma_bolt(g, p.x, p.y - 0.1, g.lock_uid);
+            g.fired += 1;
+            play_pitch(g.audio, S_LASER, 0.5);
+            play_pitch(g.audio, S_HIT, 0.45);
+            burst(g, p.x, p.y, g.pz - 3.0, 14, 6.0, 0.3, 1);
+        }
+        p.charge = 0.0;
+        g.lock_uid = -1;
+    }
+    p.was_firing = firing;
     if firing and p.fire_cd <= 0.0 {
         p.fire_cd = 0.125;
         dmg = 2.0 if p.weapon >= 2 else 1.0;
@@ -425,6 +579,43 @@ def update_player(g: Game, dt: float) {
     }
 }
 
+"""The enemy nearest the aim line ahead, as a lock-on target (uid, or -1)."""
+def find_lock(g: Game) -> int {
+    p = g.player;
+    best = 1.0e9;
+    uid = -1;
+    for e in g.enemies {
+        if not e.alive or e.delay > 0.0 or e.invuln {
+            continue;
+        }
+        rz = g.pz - e.z;
+        if rz < 8.0 or rz > 170.0 {
+            continue;
+        }
+        dx = e.x - p.x;
+        dy = e.y - p.y;
+        lat = math.sqrt(dx * dx + dy * dy);
+        if lat > 5.0 + rz * 0.08 {
+            continue;
+        }
+        score = lat + rz * 0.05;
+        if score < best {
+            best = score;
+            uid = e.uid;
+        }
+    }
+    return uid;
+}
+
+def enemy_by_uid(g: Game, uid: int) -> int {
+    for i in range(len(g.enemies)) {
+        if g.enemies[i].uid == uid and g.enemies[i].alive {
+            return i;
+        }
+    }
+    return -1;
+}
+
 def detonate_bomb(g: Game) {
     play(g.audio, S_BOMB);
     g.white_fx = 0.8;
@@ -439,7 +630,7 @@ def detonate_bomb(g: Game) {
     for e in g.enemies {
         rz = g.pz - e.z;
         if e.alive and e.delay <= 0.0 and rz > -5.0 and rz < 90.0 and e.kind != K_ICE {
-            damage_enemy(g, e, 20.0);
+            damage_enemy(g, e, 20.0, True);
         }
     }
     for k in range(4) {
@@ -496,7 +687,17 @@ def update_enemy(g: Game, e: Enemy, dt: float) {
     } elif e.pat == P_FLANK {
         update_lance(g, e, dt, rz);
     } elif e.pat == P_HOVER {
-        update_warden(g, e, dt, rz);
+        if e.kind == K_SEEKER {
+            update_seeker(g, e, dt, rz);
+        } elif e.kind == K_PRISM {
+            update_prism(g, e, dt, rz);
+        } elif e.kind == K_WEAVER {
+            update_weaver(g, e, dt, rz);
+        } else {
+            update_warden(g, e, dt, rz);
+        }
+    } elif e.pat == P_HOMING {
+        update_missile(g, e, dt);
     } elif e.pat == P_LANTERN {
         # Dive through the left of the flight box (interceptable), then strike the ark.
         tx = e.ox;
@@ -517,7 +718,7 @@ def update_enemy(g: Game, e: Enemy, dt: float) {
             e.state = 1;
         } elif e.state == 1 and n < 9.0 {
             e.alive = False;
-            g.lantern_hp -= 4.0;
+            g.lantern_hp -= 4.0 * g.dmg_scale;
             explosion(g, e.x, e.y, e.z, 2.5, 1);
             break_group(g, e);
             return;
@@ -533,7 +734,7 @@ def update_enemy(g: Game, e: Enemy, dt: float) {
 
     if e.shoots and e.pat != P_FLANK and e.pat != P_HOVER and e.pat != P_PART {
         if rz > 30.0 and rz < 110.0 and p.alive {
-            e.fire_t -= dt;
+            e.fire_t -= dt * g.fire_rate;
             if e.fire_t <= 0.0 {
                 e.fire_t = rnd(2.5, 4.5) if e.kind != K_TURRET else rnd(1.6, 2.6);
                 aim_at_player(g, e, 24.0 if e.kind == K_MOTE else 30.0);
@@ -570,7 +771,7 @@ def update_lance(g: Game, e: Enemy, dt: float, rz: float) {
         e.yaw += (math.pi - e.yaw) * min(1.0, dt * 6.0);
         e.roll *= 0.9;
         if e.state_t > 0.55 and e.c < 3.0 and g.player.alive {
-            e.fire_t -= dt;
+            e.fire_t -= dt * g.fire_rate;
             if e.fire_t <= 0.0 {
                 e.fire_t = 0.16;
                 e.c += 1.0;
@@ -604,7 +805,7 @@ def update_warden(g: Game, e: Enemy, dt: float, rz: float) {
         e.x = e.ox + 5.0 * math.sin(e.state_t * 0.7);
         e.y = e.oy + 1.5 * math.sin(e.state_t * 1.1);
         e.roll = 0.15 * math.sin(e.state_t * 0.7);
-        e.fire_t -= dt;
+        e.fire_t -= dt * g.fire_rate;
         if e.fire_t <= 0.0 and g.player.alive {
             e.fire_t = 2.2;
             spread(g, e, 5, 0.18, 26.0);
@@ -615,6 +816,185 @@ def update_warden(g: Game, e: Enemy, dt: float, rz: float) {
     } else {
         e.y += 10.0 * dt;
         e.z += (-g.speed - 25.0) * dt;
+    }
+}
+
+def update_seeker(g: Game, e: Enemy, dt: float, rz: float) {
+    e.state_t += dt;
+    e.yaw = math.pi;
+    if e.state == 0 {
+        e.z += (-g.speed + 30.0) * dt;
+        e.x += (e.ox - e.x) * dt;
+        if rz <= e.dz {
+            e.state = 1;
+            e.state_t = 0.0;
+            e.fire_t = 1.2;
+        }
+    } elif e.state == 1 {
+        e.z = g.pz - e.dz;
+        e.x = e.ox + 4.0 * math.sin(e.state_t * 0.6);
+        e.y = e.oy + 1.2 * math.sin(e.state_t * 0.9);
+        e.roll = 0.12 * math.sin(e.state_t * 0.6);
+        e.fire_t -= dt * g.fire_rate;
+        if e.fire_t <= 0.0 and g.player.alive {
+            e.fire_t = 3.2;
+            side = 1.0 if e.c >= 0.0 else -1.0;
+            e.c = -side;
+            m = make_enemy(g, K_MISSILE, e.x + side * 1.9, e.y, e.z + 1.5);
+            m.pat = P_HOMING;
+            m.vx = side * 7.0;
+            m.vy = 4.0;
+            m.vz = 16.0;
+            m.spin = 0.0;
+            play_pitch(g.audio, S_ENEMY_SHOT, 0.6);
+        }
+        if e.state_t > 15.0 {
+            e.state = 2;
+        }
+    } else {
+        e.y += 9.0 * dt;
+        e.z += (-g.speed - 25.0) * dt;
+    }
+}
+
+"""Homing crystal: steers toward the player for seven seconds, then shatters."""
+def update_missile(g: Game, e: Enemy, dt: float) {
+    p = g.player;
+    if e.t > 7.0 {
+        e.alive = False;
+        burst(g, e.x, e.y, e.z, 8, 4.0, 0.2, 0);
+        return;
+    }
+    dx = p.x - e.x;
+    dy = p.y - e.y;
+    dz = g.pz - e.z;
+    n = max(0.01, math.sqrt(dx * dx + dy * dy + dz * dz));
+    sp = (20.0 + e.t * 2.5) * g.orb_speed;
+    k = min(1.0, dt * 1.9);
+    e.vx += (dx / n * sp - e.vx) * k;
+    e.vy += (dy / n * sp - e.vy) * k;
+    e.vz += (dz / n * sp - e.vz) * k;
+    e.x += e.vx * dt;
+    e.y += e.vy * dt;
+    e.z += (e.vz - g.speed) * dt;
+    v = max(0.01, math.sqrt(e.vx * e.vx + e.vy * e.vy + e.vz * e.vz));
+    e.yaw = math.atan2(-e.vx, -e.vz);
+    e.pitch = math.asin(max(-1.0, min(1.0, e.vy / v)));
+    if random.random() < dt * 30.0 {
+        particle(g, e.x, e.y, e.z, 0.0, 0.0, -g.speed, 0.3, 0.18, 230, 90, 255);
+    }
+}
+
+"""Prism: closed armour (state 0), opening (1), open and firing (2), closing (3).
+`b` is how far the halves are apart, `c` is 0 approaching, 1 active, 2 leaving."""
+def update_prism(g: Game, e: Enemy, dt: float, rz: float) {
+    e.yaw = math.pi;
+    e.roll += 0.35 * dt;
+    if e.c == 0.0 {
+        e.z += (-g.speed + 30.0) * dt;
+        e.x += (e.ox - e.x) * dt;
+        if rz <= e.dz {
+            e.c = 1.0;
+            e.state = 0;
+            e.state_t = 0.0;
+        }
+        return;
+    }
+    if e.c == 2.0 {
+        e.b = max(0.0, e.b - dt * 3.0);
+        e.y += 8.0 * dt;
+        e.z += (-g.speed - 22.0) * dt;
+        return;
+    }
+    e.z = g.pz - e.dz;
+    e.x = e.ox + 3.0 * math.sin(e.t * 0.5);
+    e.y = e.oy + math.sin(e.t * 0.7);
+    e.state_t += dt * g.fire_rate;
+    if e.state == 0 and e.state_t > 3.0 {
+        e.state = 1;
+        e.state_t = 0.0;
+    } elif e.state == 1 {
+        e.b = min(1.0, e.state_t / 0.35);
+        if e.state_t > 0.35 {
+            e.state = 2;
+            e.state_t = 0.0;
+            if g.player.alive {
+                spread(g, e, 7, 0.11, 26.0);
+            }
+        }
+    } elif e.state == 2 and e.state_t > 1.9 {
+        e.state = 3;
+        e.state_t = 0.0;
+    } elif e.state == 3 {
+        e.b = max(0.0, 1.0 - e.state_t / 0.35);
+        if e.state_t > 0.35 {
+            e.state = 0;
+            e.state_t = 0.0;
+        }
+    }
+    if e.t > 24.0 and e.state == 0 {
+        e.c = 2.0;
+    }
+}
+
+"""Weaver: hangs back and drifts; update_links shields what it reaches."""
+def update_weaver(g: Game, e: Enemy, dt: float, rz: float) {
+    e.yaw += dt * 0.8;
+    e.roll += dt * 0.5;
+    if e.state == 0 {
+        e.z += (-g.speed + 30.0) * dt;
+        e.x += (e.ox - e.x) * dt;
+        if rz <= e.dz {
+            e.state = 1;
+            e.state_t = 0.0;
+        }
+    } elif e.state == 1 {
+        e.state_t += dt;
+        e.z = g.pz - e.dz;
+        e.x = e.ox + 6.0 * math.sin(e.state_t * 0.45);
+        e.y = e.oy + 2.5 * math.sin(e.state_t * 0.9);
+        if e.state_t > 26.0 {
+            e.state = 2;
+        }
+    } else {
+        e.y += 7.0 * dt;
+        e.z += (-g.speed - 20.0) * dt;
+    }
+}
+
+"""Each active Weaver shields up to four of the nearest Choir within 30 units."""
+def update_links(g: Game) {
+    for e in g.enemies {
+        e.shielded = False;
+        e.link = -1;
+    }
+    for w in g.enemies {
+        if not w.alive or w.kind != K_WEAVER or w.delay > 0.0 or w.state == 0 {
+            continue;
+        }
+        for n in range(4) {
+            best = 900.0;
+            pick = -1;
+            for i in range(len(g.enemies)) {
+                e = g.enemies[i];
+                if not e.alive or e.shielded or e.delay > 0.0 or e.kind == K_WEAVER or e.kind == K_MISSILE or e.kind == K_ICE or e.kind == K_BODY {
+                    continue;
+                }
+                dx = e.x - w.x;
+                dy = e.y - w.y;
+                dz = e.z - w.z;
+                d2 = dx * dx + dy * dy + dz * dz;
+                if d2 < best {
+                    best = d2;
+                    pick = i;
+                }
+            }
+            if pick < 0 {
+                break;
+            }
+            g.enemies[pick].shielded = True;
+            g.enemies[pick].link = w.uid;
+        }
     }
 }
 
@@ -671,6 +1051,8 @@ def boss_part(g: Game, kind: int, slot: int) -> Enemy {
 def start_boss(g: Game, kind: int) {
     g.boss = Boss(kind=kind, parts=[], core=[], body=[]);
     g.boss_active = True;
+    g.warn_t = 3.6;
+    save_checkpoint(g);
     b = g.boss;
     play(g.audio, S_WARNING);
     music(g.audio, MU_BOSS);
@@ -809,7 +1191,7 @@ def update_vault(g: Game, b: Boss, dt: float) {
         e.z = g.pz - (240.0 - 180.0 * enter);
         e.yaw = b.t * 0.5 + float(k);
         if enter >= 1.0 and g.player.alive {
-            e.fire_t -= dt;
+            e.fire_t -= dt * g.fire_rate;
             if e.fire_t <= 0.0 {
                 e.fire_t = 3.4;
                 n = 10;
@@ -860,7 +1242,7 @@ def update_carrier(g: Game, b: Boss, dt: float) {
         e.yaw = math.pi;
         e.roll += dt * 0.8;
         if b.phase >= 1 and g.player.alive {
-            e.fire_t -= dt;
+            e.fire_t -= dt * g.fire_rate;
             if e.fire_t <= 0.0 {
                 e.fire_t = 2.8;
                 spread(g, e, 3, 0.2, 28.0);
@@ -868,7 +1250,7 @@ def update_carrier(g: Game, b: Boss, dt: float) {
         }
     }
     if b.phase >= 1 {
-        b.launch_t -= dt;
+        b.launch_t -= dt * g.fire_rate;
         if b.launch_t <= 0.0 {
             b.launch_t = 4.8 if b.phase == 1 else 4.0;
             for k in range(3) {
@@ -880,6 +1262,16 @@ def update_carrier(g: Game, b: Boss, dt: float) {
                 m.delay = float(k) * 0.3;
             }
         }
+    }
+    if b.phase == 1 and b.t > 16.0 and b.count == 0 {
+        b.count = 1;
+        w = make_enemy(g, K_WEAVER, b.x, b.y + 9.0, b.z + 10.0);
+        w.pat = P_HOVER;
+        w.ox = b.x;
+        w.oy = b.y + 7.0;
+        w.dz = 82.0;
+        w.holds = True;
+        trigger(g, "weaver");
     }
     if b.phase == 1 and alive_parts(b) == 0 {
         b.phase = 2;
@@ -898,7 +1290,7 @@ def update_carrier(g: Game, b: Boss, dt: float) {
             core.y = b.y;
             core.z = b.z + 12.0;
             core.roll += dt * 2.0;
-            b.attack_t -= dt;
+            b.attack_t -= dt * g.fire_rate;
             if b.attack_t <= 0.0 and g.player.alive {
                 b.attack_t = 1.7;
                 spread(g, core, 5, 0.12, 30.0);
@@ -945,7 +1337,7 @@ def update_conductor(g: Game, b: Boss, dt: float) {
         e.roll = a;
         e.yaw = math.pi;
         if b.phase == 1 and g.player.alive {
-            e.fire_t -= dt;
+            e.fire_t -= dt * g.fire_rate;
             if e.fire_t <= 0.0 {
                 e.fire_t = 0.24;
                 sa = b.t * 2.4 + float(e.slot) * 1.3;
@@ -964,7 +1356,7 @@ def update_conductor(g: Game, b: Boss, dt: float) {
             }
             b.count = alive_n;
         }
-        b.attack_t -= dt;
+        b.attack_t -= dt * g.fire_rate;
         if b.attack_t <= 0.0 and g.player.alive {
             b.attack_t = 3.0;
             aim_at_player(g, body, 30.0);
@@ -983,8 +1375,8 @@ def update_conductor(g: Game, b: Boss, dt: float) {
             g.gate_t = 0.01;
         }
         if body.alive and g.player.alive {
-            b.attack_t -= dt;
-            b.launch_t -= dt;
+            b.attack_t -= dt * g.fire_rate;
+            b.launch_t -= dt * g.fire_rate;
             if b.phase == 2 {
                 if b.attack_t <= 0.0 {
                     b.attack_t = 2.2;
@@ -1057,10 +1449,13 @@ def collide(g: Game) {
             if dx * dx + dy * dy + dz * dz < r * r {
                 s.alive = False;
                 g.hits += 1;
-                if e.invuln {
+                g.hit_t = 0.12;
+                if s.charged {
+                    plasma_impact(g, s, e);
+                } elif e.invuln {
                     burst(g, s.x, s.y, s.z, 4, 5.0, 0.15, 0);
                 } else {
-                    damage_enemy(g, e, s.dmg);
+                    damage_enemy(g, e, s.dmg, False);
                     burst(g, s.x, s.y, s.z, 3, 4.0, 0.14, 1);
                 }
                 break;
@@ -1083,7 +1478,7 @@ def collide(g: Game) {
         return;
     }
     for e in g.enemies {
-        if not e.alive or e.delay > 0.0 or e.pat == P_PART {
+        if not e.alive or e.delay > 0.0 {
             continue;
         }
         dz = e.z - g.pz;
@@ -1094,31 +1489,31 @@ def collide(g: Game) {
         dx = e.x - p.x;
         dy = e.y - p.y;
         if dx * dx + dy * dy + dz * dz < r * r {
-            if e.kind == K_MOTE or e.kind == K_LANCE or e.kind == K_ICE or e.kind == K_MINE {
+            if e.kind == K_MISSILE {
+                kill_enemy(g, e);
+                if not rolling {
+                    hurt(g, 12.0);
+                }
+            } elif e.kind == K_MOTE or e.kind == K_LANCE or e.kind == K_ICE or e.kind == K_MINE {
                 kill_enemy(g, e);
                 hurt(g, 15.0);
             } elif e.kind == K_CACHE {
                 kill_enemy(g, e);
             } else {
-                hurt(g, 20.0);
+                push_out_sphere(g, e.x, e.y, e.z, r);
+                crash(g, 20.0);
             }
         }
     }
     for pr in g.props {
         if pr.solid and pr.alive and prop_hit(pr, p.x, p.y, g.pz, 0.8) {
-            if p.invuln <= 0.0 {
-                hurt(g, 20.0);
-                burst(g, p.x, p.y, g.pz - 1.0, 20, 8.0, 0.3, 1);
-            }
+            g.prop_hits += 1;
             if pr.box {
-                p.vy += 14.0 if p.y > pr.y else -14.0;
+                push_out_box(g, pr);
             } else {
-                dx = p.x - pr.x;
-                dy = p.y - pr.y;
-                n = max(0.1, math.sqrt(dx * dx + dy * dy));
-                p.vx += dx / n * 14.0;
-                p.vy += dy / n * 14.0;
+                push_out_sphere(g, pr.x, pr.y, pr.z, pr.radius + 0.8);
             }
+            crash(g, 20.0);
         }
     }
     for u in g.pickups {
@@ -1132,6 +1527,85 @@ def collide(g: Game) {
             collect(g, u);
         }
     }
+}
+
+"""Charged plasma: heavy hit that ignores armour, plus splash damage nearby."""
+def plasma_impact(g: Game, s: Shot, e: Enemy) {
+    if not e.invuln {
+        damage_enemy(g, e, s.dmg, True);
+    }
+    for o in g.enemies {
+        if o.alive and o.uid != e.uid and not o.invuln and o.delay <= 0.0 {
+            dx = o.x - s.x;
+            dy = o.y - s.y;
+            dz = o.z - s.z;
+            if dx * dx + dy * dy + dz * dz < 49.0 {
+                damage_enemy(g, o, 4.0, True);
+            }
+        }
+    }
+    burst(g, s.x, s.y, s.z, 30, 12.0, 0.35, 1);
+    shockwave(g, s.x, s.y, s.z, 7.0, 0.4);
+    g.shake = max(g.shake, 0.35);
+}
+
+"""Hitting something solid: damage once per invulnerability window, sparks
+and a hard shake on impact, a lighter scrape while still in contact."""
+def crash(g: Game, dmg: float) {
+    p = g.player;
+    if p.invuln <= 0.0 and p.alive {
+        hurt(g, dmg);
+        g.shake = max(g.shake, 1.1);
+        burst(g, p.x, p.y, g.pz - 1.2, 34, 11.0, 0.32, 1);
+        play_pitch(g.audio, S_EXPLODE_SMALL, 0.65);
+    } elif random.random() < 0.35 {
+        burst(g, p.x, p.y, g.pz - 1.2, 3, 6.0, 0.2, 1);
+        g.shake = max(g.shake, 0.35);
+    }
+}
+
+"""Move the ship out of a box obstacle through its nearer horizontal face
+(the one that stays inside the flight box), and bounce it that way."""
+def push_out_box(g: Game, pr: Prop) {
+    p = g.player;
+    top = pr.y + pr.hy + 0.85;
+    bottom = pr.y - pr.hy - 0.85;
+    go_up = p.y > pr.y;
+    if go_up and top > g.max_y {
+        go_up = False;
+    } elif not go_up and bottom < g.min_y {
+        go_up = True;
+    }
+    if go_up {
+        p.y = min(top, g.max_y);
+        p.vy = max(p.vy, 9.0);
+    } else {
+        p.y = max(bottom, g.min_y);
+        p.vy = min(p.vy, -9.0);
+    }
+}
+
+"""Move the ship radially (in x/y) out of a sphere obstacle and bounce it."""
+def push_out_sphere(g: Game, cx: float, cy: float, cz: float, r: float) {
+    p = g.player;
+    dz = g.pz - cz;
+    ring = math.sqrt(max(0.0, r * r - dz * dz));
+    dx = p.x - cx;
+    dy = p.y - cy;
+    n = math.sqrt(dx * dx + dy * dy);
+    if n < 0.01 {
+        dx = 1.0 if cx <= 0.0 else -1.0;
+        dy = 0.0;
+        n = 1.0;
+    }
+    if n < ring {
+        p.x = cx + dx / n * ring;
+        p.y = cy + dy / n * ring;
+    }
+    p.vx += dx / n * 10.0;
+    p.vy += dy / n * 10.0;
+    p.x = max(-g.max_x, min(g.max_x, p.x));
+    p.y = max(g.min_y, min(g.max_y, p.y));
 }
 
 def prop_hit(pr: Prop, x: float, y: float, z: float, pad: float) -> bool {
@@ -1161,6 +1635,8 @@ def update_play(g: Game, dt: float) {
     target = 28.0;
     if p.boosting {
         target = 44.0;
+    } elif p.braking {
+        target = 17.0;
     }
     if g.chapter == 5 and not g.boss_active and g.boss.kind == B_CONDUCTOR {
         target = 64.0;
@@ -1213,12 +1689,16 @@ def update_play(g: Game, dt: float) {
     if g.boss_active {
         update_boss(g, dt);
     }
+    update_links(g);
     for e in g.enemies {
         if e.alive {
             update_enemy(g, e, dt);
         }
     }
     for s in g.shots {
+        if s.alive and s.charged {
+            steer_plasma(g, s, dt);
+        }
         if s.alive {
             s.x += s.vx * dt;
             s.y += s.vy * dt;
@@ -1233,7 +1713,7 @@ def update_play(g: Game, dt: float) {
         if u.alive {
             u.t += dt;
             rz = g.pz - u.z;
-            if rz < 45.0 and p.alive {
+            if rz < p.magnet and p.alive {
                 u.x += max(-1.0, min(1.0, p.x - u.x)) * 9.0 * dt;
                 u.y += max(-1.0, min(1.0, p.y - u.y)) * 9.0 * dt;
             }
@@ -1258,6 +1738,33 @@ def update_play(g: Game, dt: float) {
             q.alive = False;
         }
     }
+    for q in g.debris {
+        q.x += q.vx * dt;
+        q.y += q.vy * dt;
+        q.z += q.vz * dt;
+        q.yaw += q.spin * dt;
+        q.pitch += q.spin * 0.7 * dt;
+        q.life -= dt;
+        if q.life <= 0.0 {
+            q.alive = False;
+        }
+    }
+    for r in g.rings {
+        r.t += dt;
+        if r.t >= r.dur {
+            r.alive = False;
+        }
+    }
+    for u in g.popups {
+        u.t += dt;
+        u.z -= g.speed * dt;
+        if u.t > 1.1 {
+            u.alive = False;
+        }
+    }
+    g.hit_t = max(0.0, g.hit_t - dt);
+    g.warn_t = max(0.0, g.warn_t - dt);
+    g.intro_t = max(0.0, g.intro_t - dt);
     collide(g);
     compact(g);
 
@@ -1271,6 +1778,13 @@ def update_play(g: Game, dt: float) {
 
     # chapter end
     if g.dist >= g.length and not g.hold and p.alive {
+        if g.finish_t == 0.0 {
+            g.chapter_score = g.score - g.chapter_start_score;
+            if g.chapter_score >= MEDAL_SCORE[g.chapter] {
+                g.medal_new = g.medals[g.chapter] == 0;
+                g.medals[g.chapter] = 1;
+            }
+        }
         g.finish_t += dt;
         if g.chapter == 5 {
             if g.finish_t > 3.2 {
@@ -1294,10 +1808,38 @@ def update_play(g: Game, dt: float) {
 def update_camera(g: Game, dt: float) {
     p = g.player;
     k = min(1.0, dt * 4.0);
-    g.cam_x += (p.x * 0.72 - g.cam_x) * k;
-    g.cam_y += (p.y * 0.68 + 2.4 - g.cam_y) * k;
+    sweep = g.intro_t / 3.4;
+    sweep = sweep * sweep;
+    g.cam_x += (p.x * 0.72 + 16.0 * sweep - g.cam_x) * k;
+    g.cam_y += (p.y * 0.68 + 2.4 + 6.0 * sweep - g.cam_y) * k;
     g.cam_roll += (p.bank * 0.25 - g.cam_roll) * k;
     g.shake = max(0.0, g.shake - dt * 1.8);
+}
+
+"""Charged plasma homes on its lock (or flies straight without one)."""
+def steer_plasma(g: Game, s: Shot, dt: float) {
+    if random.random() < dt * 60.0 {
+        particle(g, s.x, s.y, s.z, 0.0, 0.0, -g.speed, 0.25, 0.35, 255, 190, 110);
+    }
+    if s.target < 0 {
+        return;
+    }
+    i = enemy_by_uid(g, s.target);
+    if i < 0 {
+        return;
+    }
+    e = g.enemies[i];
+    dx = e.x - s.x;
+    dy = e.y - s.y;
+    dz = e.z - s.z;
+    n = max(0.01, math.sqrt(dx * dx + dy * dy + dz * dz));
+    sp = 110.0;
+    k = min(1.0, dt * 7.0);
+    rvz = s.vz + g.speed;
+    s.vx += (dx / n * sp - s.vx) * k;
+    s.vy += (dy / n * sp - s.vy) * k;
+    rvz += (dz / n * sp - rvz) * k;
+    s.vz = rvz - g.speed;
 }
 
 def compact(g: Game) {
@@ -1336,4 +1878,25 @@ def compact(g: Game) {
         }
     }
     g.props = rs;
+    ds: list[Debris] = [];
+    for q in g.debris {
+        if q.alive {
+            ds.append(q);
+        }
+    }
+    g.debris = ds;
+    rgs: list[Ring] = [];
+    for r in g.rings {
+        if r.alive {
+            rgs.append(r);
+        }
+    }
+    g.rings = rgs;
+    pops: list[Popup] = [];
+    for u in g.popups {
+        if u.alive {
+            pops.append(u);
+        }
+    }
+    g.popups = pops;
 }

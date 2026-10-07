@@ -19,14 +19,18 @@ from code.
 | Action | Keyboard | Gamepad |
 |---|---|---|
 | Steer | WASD / arrows | left stick |
-| Fire | Space / J | A |
+| Fire (hold to charge, release for a homing plasma bolt) | Space / J | A |
 | Roll (deflects shots) | Q / E | LB / RB |
 | Boost | Shift | RT |
+| Brake | Ctrl / C | LT |
 | Bomb | B / K | X |
 | Pause | P / Esc | Start |
 | Mute / fullscreen | M / F11 | |
 
-Progress (unlocked chapters, best scores) is saved in `save.txt`.
+New Game asks for a difficulty (Recruit, Guard, Ace). After each chapter you
+pick one of three refit upgrades for the Kestrel. Each chapter has a medal
+score, and dying after a boss appears lets you retry from that boss. Progress
+is saved in `save.txt`.
 
 ## Requirements
 
@@ -65,6 +69,12 @@ Regenerate assets with `./build.sh --assets`. Individual models:
 `--demo` flies an invulnerable autopilot that fires constantly. `--frames N`
 runs N fixed 1/60 s steps uncapped, then exits and prints a summary.
 `--shot-every K` saves `shot_c<chapter>_<frame>.png` every K frames.
+`--screen difficulty|refit2|briefing3|prologue|controls|select` opens a menu
+screen directly. `--pin-y Y` holds the ship at height Y. `--ss F` sets the
+supersampling factor (default 1.5; use 1 on weak GPUs).
+
+Fonts: Chakra Petch and Barlow, both under the SIL Open Font License
+(`assets/fonts/OFL-*.txt`).
 
 ## Notes on Jac native
 
