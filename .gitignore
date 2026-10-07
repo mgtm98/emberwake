@@ -1,0 +1,29 @@
+# Build outputs (./build.sh recreates them)
+/emberwake
+/gallery
+/spike/spike
+*.layout.json
+.jac/
+
+# Downloads and scratch: raylib release, test screenshots, logs
+.build/
+libraylib.so*
+
+# Music masters: the game loads the .ogg next to each one;
+# python3 tools/gen_audio.py regenerates both
+assets/music/*.wav
+
+# Local play state and test captures
+save.txt
+/shot_*.png
+/gallery.png
+
+# Python
+__pycache__/
+*.pyc
+
+# Editors and OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
